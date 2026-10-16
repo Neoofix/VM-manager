@@ -106,6 +106,8 @@ jobs:
             -d RootDir=. \
             -d AssetsDir=crates/vm-manager/assets \
             -o "dist/VM-Manager-$version-x64.msi"
+          # Fichier de débogage WiX, inutile pour l'utilisateur
+          rm -f dist/*.wixpdb
 
       # ── Paquet Debian / Ubuntu (.deb) ───────────────────────────────────
       - name: Installation de cargo-deb
