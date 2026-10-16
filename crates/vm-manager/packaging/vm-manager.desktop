@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=VM Manager
+GenericName=Inventaire de VM
+Comment=Mémo et inventaire de machines virtuelles
+Exec=vm-manager
+Icon=vm-manager
+Terminal=false
+Categories=Utility;System;
+Keywords=vm;inventaire;ssh;réseau;

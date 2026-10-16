@@ -1,5 +1,6 @@
 # Compilation manuelle : onglet « Actions » → « Build » → « Run workflow ».
-# Les exécutables sont joints à une release en brouillon (onglet « Releases »,
+# Produit : .msi (Windows), .deb (Debian/Ubuntu) et archives portables.
+# Les fichiers sont joints à une release en brouillon (onglet « Releases »,
 # visible uniquement par les mainteneurs tant qu'elle n'est pas publiée) et
 # restent aussi téléchargeables en bas de la page du run (section « Artifacts »).
 name: Build
@@ -68,31 +69,68 @@ jobs:
         if: steps.wanted.outputs.yes == 'true'
         run: cargo build --release --locked -p vm-manager
 
-      - name: Préparation de l'archive
+      - name: Archive portable
         if: steps.wanted.outputs.yes == 'true'
         id: pkg
         shell: bash
         run: |
           short=$(git rev-parse --short HEAD)
+          version=$(grep -m1 '^version' Cargo.toml | cut -d '"' -f2)
           name="vm-manager-${{ matrix.key }}-${short}"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           mkdir -p "dist/$name"
           cp "target/release/${{ matrix.exe }}" README.md LICENSE "dist/$name/"
           cd dist
           if [ "${{ matrix.key }}" = "windows" ]; then
-            7z a -tzip "$name.zip" "$name" > /dev/null
-            echo "file=dist/$name.zip" >> "$GITHUB_OUTPUT"
+            7z a -tzip "$name-portable.zip" "$name" > /dev/null
           else
             # tar conserve le droit d'exécution du binaire
-            tar -czf "$name.tar.gz" "$name"
-            echo "file=dist/$name.tar.gz" >> "$GITHUB_OUTPUT"
+            tar -czf "$name-portable.tar.gz" "$name"
           fi
-          echo "name=$name" >> "$GITHUB_OUTPUT"
+          rm -rf "$name"
+
+      # ── Installateur Windows (.msi) ─────────────────────────────────────
+      - name: Installation de WiX Toolset
+        if: steps.wanted.outputs.yes == 'true' && matrix.key == 'windows'
+        run: dotnet tool install --global wix --version 5.0.2
+
+      - name: Installateur .msi
+        if: steps.wanted.outputs.yes == 'true' && matrix.key == 'windows'
+        shell: bash
+        run: |
+          version="${{ steps.pkg.outputs.version }}"
+          wix build installer/vm-manager.wxs -arch x64 \
+            -d Version="$version" \
+            -d BinDir=target/release \
+            -d RootDir=. \
+            -d AssetsDir=crates/vm-manager/assets \
+            -o "dist/VM-Manager-$version-x64.msi"
+
+      # ── Paquet Debian / Ubuntu (.deb) ───────────────────────────────────
+      - name: Installation de cargo-deb
+        if: steps.wanted.outputs.yes == 'true' && matrix.key == 'linux'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb
+
+      - name: Paquet .deb
+        if: steps.wanted.outputs.yes == 'true' && matrix.key == 'linux'
+        run: |
+          cargo deb -p vm-manager --no-build --output dist/
+          dpkg-deb --info dist/*.deb
+          dpkg-deb --contents dist/*.deb
+
+      - name: Fichiers produits
+        if: steps.wanted.outputs.yes == 'true'
+        shell: bash
+        run: ls -la dist
 
       - uses: actions/upload-artifact@v4
         if: steps.wanted.outputs.yes == 'true'
         with:
           name: ${{ steps.pkg.outputs.name }}
-          path: ${{ steps.pkg.outputs.file }}
+          path: dist/*
           retention-days: 14
           if-no-files-found: error
 
@@ -130,8 +168,11 @@ jobs:
           body: |
             Build de test depuis `${{ github.ref_name }}` (commit ${{ steps.v.outputs.short }}).
 
-            - **Windows** : `vm-manager-windows-*.zip` → décompresser, lancer `vm-manager.exe`
-              (non signé : SmartScreen → *Informations complémentaires* → *Exécuter quand même*).
-            - **Linux / macOS** : `tar xzf vm-manager-*.tar.gz` puis `./vm-manager`.
+            | Fichier | Usage |
+            |---|---|
+            | `VM-Manager-*-x64.msi` | **Windows** — installateur (Program Files + menu Démarrer). Inventaire dans `%APPDATA%\VM Manager`. |
+            | `vm-manager_*_amd64.deb` | **Debian / Ubuntu** — `sudo apt install ./vm-manager_*_amd64.deb`. Inventaire dans `~/.local/share/vm-manager`. |
+            | `vm-manager-windows-*-portable.zip` | Windows portable : décompresser, lancer `vm-manager.exe` (inventaire à côté). |
+            | `vm-manager-linux-*-portable.tar.gz` / `vm-manager-macos-*` | Linux / macOS portable : `tar xzf …` puis `./vm-manager`. |
 
-            L'inventaire `vm-manager.json` est créé à côté de l'exécutable.
+            Binaires non signés : sous Windows, SmartScreen → *Informations complémentaires* → *Exécuter quand même*.

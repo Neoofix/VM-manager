@@ -56,7 +56,8 @@ pub fn show(ui: &mut Ui, store: &Store, data_path: &Path, source: DataSource, st
         ui.label(RichText::new(format!("Source : {}", source.label())).small().color(p().text_secondary));
         ui.label(
             RichText::new(format!(
-                "Par défaut le fichier est créé à côté de l'exécutable. Pour en utiliser un autre : \
+                "Version portable : fichier à côté de l'exécutable. Version installée (.msi / .deb) : \
+                 dossier de données de l'utilisateur. Pour en utiliser un autre : \
                  vm-manager --data <fichier>  ou la variable {DATA_ENV}."
             ))
             .small()

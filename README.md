@@ -18,18 +18,22 @@ Mémo / inventaire de machines virtuelles pour homelab et petites infras : group
 - **Duplication** d'une VM, **export / import JSON** (fusion ou remplacement)
 - **Thèmes** changeables à chaud dans Paramètres → Apparence : One Half Dark, Fluent Dark, Gruvbox Dark, Nord, Dracula, Catppuccin Mocha, Tokyo Night (choix mémorisé dans `vm-manager.prefs.json`, à côté de l'inventaire)
 
-## Télécharger un exécutable (sans rien installer)
+## Télécharger et installer (sans compiler)
 
 1. Sur GitHub, onglet **Actions** → workflow **Build** → bouton **Run workflow** (choix des plateformes : Windows, Linux, macOS).
-2. Après ~5 à 10 min, onglet **Releases** : une release **brouillon (Draft)** `v0.1.0-build.N` contient les exécutables.
-   Les brouillons ne sont visibles que par les mainteneurs du dépôt ; clique *Edit* → *Publish release* pour la rendre publique.
+2. Après ~5 à 10 min, onglet **Releases** : une release **brouillon (Draft)** `v0.1.0-build.N` contient les fichiers.
+   Les brouillons ne sont visibles que par les mainteneurs ; *Edit* → *Publish release* pour la rendre publique.
    Les mêmes fichiers sont aussi en bas de la page du run (section **Artifacts**, conservés 14 jours).
-   - **Windows** : `vm-manager-windows-<commit>.zip` → décompresse et lance `vm-manager.exe`.
-     L'exécutable n'est pas signé : si SmartScreen s'affiche, *Informations complémentaires* → *Exécuter quand même*.
-   - **Linux** : `tar xzf vm-manager-linux-<commit>.tar.gz` puis `./vm-manager`.
-   - **macOS** : idem ; au premier lancement, clic droit → *Ouvrir* (binaire non signé).
 
-Le fichier `vm-manager.json` est créé à côté de l'exécutable.
+| Fichier | Plateforme | Installation | Inventaire enregistré dans |
+|---|---|---|---|
+| `VM-Manager-<version>-x64.msi` | Windows | double-clic → installé dans `Program Files\VM Manager`, raccourci dans le menu Démarrer ; désinstallation via *Paramètres → Applications* | `%APPDATA%\VM Manager\vm-manager.json` |
+| `vm-manager_<version>-1_amd64.deb` | Debian / Ubuntu | `sudo apt install ./vm-manager_<version>-1_amd64.deb` → commande `vm-manager` et entrée dans le menu des applications ; `sudo apt remove vm-manager` pour désinstaller | `~/.local/share/vm-manager/vm-manager.json` |
+| `vm-manager-windows-<commit>-portable.zip` | Windows | décompresser, lancer `vm-manager.exe` | à côté de l'exécutable |
+| `vm-manager-linux-<commit>-portable.tar.gz` | Linux | `tar xzf …` puis `./vm-manager` | à côté de l'exécutable |
+| `vm-manager-macos-<commit>-portable.tar.gz` | macOS (Apple Silicon) | idem ; premier lancement : clic droit → *Ouvrir* | à côté de l'exécutable |
+
+Les binaires ne sont pas signés : si Windows SmartScreen s'affiche, *Informations complémentaires* → *Exécuter quand même*.
 
 ## Installation depuis les sources
 
@@ -52,7 +56,7 @@ L'exécutable est produit dans `target/release/vm-manager` (`vm-manager.exe` sou
 
 ## Où sont stockées les données ?
 
-L'application est **portable** : par défaut, l'inventaire est enregistré dans **`vm-manager.json`, à côté de l'exécutable**. Copier le dossier (exécutable + JSON) sur une clé USB ou un autre PC suffit à tout emporter.
+En **version portable** (zip / tar.gz), l'inventaire est enregistré dans **`vm-manager.json`, à côté de l'exécutable**. En **version installée** (`.msi` / `.deb`), il va dans le dossier de données de l'utilisateur. Copier le dossier (exécutable + JSON) sur une clé USB ou un autre PC suffit à tout emporter.
 
 Ordre de priorité pour choisir le fichier :
 
@@ -60,8 +64,9 @@ Ordre de priorité pour choisir le fichier :
 |---|---|---|
 | 1 | Argument `--data` | `vm-manager --data D:\Infra\inventaire.json` |
 | 2 | Variable d'environnement `VM_MANAGER_DATA` | `VM_MANAGER_DATA=~/Nextcloud/vms.json vm-manager` |
-| 3 | Dossier de l'exécutable | `C:\Outils\VM Manager\vm-manager.json` |
-| 4 | Dossier courant, si celui de l'exécutable n'est pas modifiable (ex. `Program Files`, `/usr/bin`) | `./vm-manager.json` |
+| 3 | Dossier de l'exécutable (version portable) | `C:\Outils\VM Manager\vm-manager.json` |
+| 4 | Dossier de données de l'utilisateur, si l'exécutable est dans un dossier système ou non modifiable (version installée par le `.msi` / `.deb`) | `%APPDATA%\VM Manager\`, `~/.local/share/vm-manager/`, `~/Library/Application Support/VM Manager/` |
+| 5 | Dossier courant, en dernier recours | `./vm-manager.json` |
 
 Le chemin réellement utilisé et sa source sont affichés dans **Paramètres**.
 
@@ -85,6 +90,7 @@ Raccourcis : `Échap` ferme la fenêtre ouverte, `Entrée` valide les formulaire
 
 ```
 VM-manager/                     workspace Cargo
+├── installer/vm-manager.wxs    installateur Windows (WiX v5)
 ├── crates/vm-core/             cœur métier, sans interface graphique
 │   └── src/
 │       ├── models.rs           Group, Vm, NetworkInfo, SshInfo, VmUser (+ *Input)
@@ -93,7 +99,9 @@ VM-manager/                     workspace Cargo
 │       ├── query.rs            recherche plein texte, commande SSH
 │       └── error.rs            erreurs typées (messages en français)
 └── crates/vm-manager/          application de bureau (eframe / egui)
-    ├── assets/icon.png
+    ├── assets/             icône (png, ico)
+    ├── packaging/          entrée de menu Linux (.desktop)
+    ├── build.rs            icône intégrée à l'exécutable Windows
     └── src/
         ├── main.rs             démarrage, fenêtre
         ├── paths.rs            choix du fichier de données (mode portable)

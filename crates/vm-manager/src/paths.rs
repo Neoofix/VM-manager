@@ -5,7 +5,10 @@
 /// 1. argument `--data <chemin>` (ou `--data=<chemin>`) ;
 /// 2. variable d'environnement `VM_MANAGER_DATA` ;
 /// 3. dossier de l'exécutable, s'il est accessible en écriture ;
-/// 4. dossier courant.
+/// 4. sinon (application installée par le `.msi` ou le `.deb`) : dossier de
+///    données de l'utilisateur — `%APPDATA%\VM Manager` sous Windows,
+///    `~/.local/share/vm-manager` sous Linux, `~/Library/Application Support/VM Manager` sous macOS ;
+/// 5. en dernier recours, dossier courant.
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -18,6 +21,7 @@ pub enum DataSource {
     Argument,
     Environment,
     ExecutableDir,
+    UserDataDir,
     CurrentDir,
 }
 
@@ -27,7 +31,10 @@ impl DataSource {
             DataSource::Argument => "argument --data",
             DataSource::Environment => "variable VM_MANAGER_DATA",
             DataSource::ExecutableDir => "dossier de l'exécutable (mode portable)",
-            DataSource::CurrentDir => "dossier courant (dossier de l'exécutable non modifiable)",
+            DataSource::UserDataDir => {
+                "dossier de données de l'utilisateur (application installée)"
+            }
+            DataSource::CurrentDir => "dossier courant",
         }
     }
 }
@@ -41,8 +48,42 @@ pub fn resolve() -> (PathBuf, DataSource) {
         std::env::args_os().skip(1),
         std::env::var_os(DATA_ENV),
         exe_dir,
-        is_writable_dir,
+        user_data_dir(),
+        |dir| !is_system_dir(dir) && is_writable_dir(dir),
     )
+}
+
+/// Dossier d'installation système (paquet .deb, installateur .msi) : jamais utilisé
+/// pour les données, même si l'application tourne avec des droits administrateur
+fn is_system_dir(dir: &Path) -> bool {
+    if cfg!(windows) {
+        ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .any(|root| dir.starts_with(root))
+    } else {
+        ["/usr", "/opt", "/bin", "/sbin", "/snap", "/Applications"]
+            .iter()
+            .any(|root| dir.starts_with(root))
+    }
+}
+
+/// Dossier de données propre à l'utilisateur, selon la plateforme
+fn user_data_dir() -> Option<PathBuf> {
+    let var = |name: &str| {
+        std::env::var_os(name)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    };
+    if cfg!(windows) {
+        var("APPDATA").map(|d| d.join("VM Manager"))
+    } else if cfg!(target_os = "macos") {
+        var("HOME").map(|h| h.join("Library/Application Support/VM Manager"))
+    } else {
+        var("XDG_DATA_HOME")
+            .or_else(|| var("HOME").map(|h| h.join(".local/share")))
+            .map(|d| d.join("vm-manager"))
+    }
 }
 
 /// Version pure de [`resolve`], testable
@@ -50,6 +91,7 @@ pub fn resolve_from(
     args: impl IntoIterator<Item = OsString>,
     env: Option<OsString>,
     exe_dir: Option<PathBuf>,
+    user_dir: Option<PathBuf>,
     writable: impl Fn(&Path) -> bool,
 ) -> (PathBuf, DataSource) {
     if let Some(path) = data_arg(args) {
@@ -58,9 +100,13 @@ pub fn resolve_from(
     if let Some(path) = env.filter(|v| !v.is_empty()) {
         return (path.into(), DataSource::Environment);
     }
-    match exe_dir {
-        Some(dir) if writable(&dir) => (dir.join(DATA_FILE_NAME), DataSource::ExecutableDir),
-        _ => (PathBuf::from(DATA_FILE_NAME), DataSource::CurrentDir),
+    if let Some(dir) = exe_dir.filter(|d| writable(d)) {
+        return (dir.join(DATA_FILE_NAME), DataSource::ExecutableDir);
+    }
+    match user_dir {
+        // Le dossier est créé à l'ouverture de l'inventaire
+        Some(dir) => (dir.join(DATA_FILE_NAME), DataSource::UserDataDir),
+        None => (PathBuf::from(DATA_FILE_NAME), DataSource::CurrentDir),
     }
 }
 
@@ -95,16 +141,21 @@ mod tests {
         v.iter().map(OsString::from).collect()
     }
 
+    fn user() -> Option<PathBuf> {
+        Some("/home/u/.local/share/vm-manager".into())
+    }
+
     #[test]
     fn argument_wins() {
         let (p, s) = resolve_from(
             os(&["--data", "/x/inv.json"]),
             Some("/env.json".into()),
             Some("/opt/app".into()),
+            user(),
             |_| true,
         );
         assert_eq!((p, s), (PathBuf::from("/x/inv.json"), DataSource::Argument));
-        let (p, _) = resolve_from(os(&["--data=/y.json"]), None, None, |_| true);
+        let (p, _) = resolve_from(os(&["--data=/y.json"]), None, None, None, |_| true);
         assert_eq!(p, PathBuf::from("/y.json"));
     }
 
@@ -114,6 +165,7 @@ mod tests {
             os(&[]),
             Some("/env.json".into()),
             Some("/opt/app".into()),
+            user(),
             |_| true,
         );
         assert_eq!(
@@ -121,18 +173,44 @@ mod tests {
             (PathBuf::from("/env.json"), DataSource::Environment)
         );
 
-        let (p, s) = resolve_from(os(&[]), Some("".into()), Some("/opt/app".into()), |_| true);
+        let (p, s) = resolve_from(
+            os(&[]),
+            Some("".into()),
+            Some("/opt/app".into()),
+            user(),
+            |_| true,
+        );
         assert_eq!(p, PathBuf::from("/opt/app").join(DATA_FILE_NAME));
         assert_eq!(s, DataSource::ExecutableDir);
     }
 
     #[test]
-    fn falls_back_to_current_dir_when_not_writable() {
-        let (p, s) = resolve_from(os(&[]), None, Some("/opt/app".into()), |_| false);
+    fn installed_app_uses_user_data_dir() {
+        // Exécutable dans /usr/bin ou Program Files : non modifiable
+        let (p, s) = resolve_from(os(&[]), None, Some("/usr/bin".into()), user(), |_| false);
+        assert_eq!(
+            p,
+            PathBuf::from("/home/u/.local/share/vm-manager").join(DATA_FILE_NAME)
+        );
+        assert_eq!(s, DataSource::UserDataDir);
+    }
+
+    #[test]
+    fn falls_back_to_current_dir_last() {
+        let (p, s) = resolve_from(os(&[]), None, Some("/usr/bin".into()), None, |_| false);
         assert_eq!(
             (p, s),
             (PathBuf::from(DATA_FILE_NAME), DataSource::CurrentDir)
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn system_dirs_are_detected() {
+        assert!(is_system_dir(Path::new("/usr/bin")));
+        assert!(is_system_dir(Path::new("/opt/vm-manager")));
+        assert!(!is_system_dir(Path::new("/home/u/outils")));
+        assert!(!is_system_dir(Path::new("/usrlocal")));
     }
 
     #[test]
