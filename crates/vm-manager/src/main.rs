@@ -3,6 +3,7 @@
 
 mod app;
 mod forms;
+mod os_presets;
 mod paths;
 mod prefs;
 mod theme;
@@ -18,7 +19,9 @@ fn main() -> eframe::Result {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("VM Manager")
         .with_inner_size([1280.0, 800.0])
-        .with_min_inner_size([960.0, 600.0]);
+        .with_min_inner_size([960.0, 600.0])
+        // Barre de titre dessinée par l'application aux couleurs du thème (ui/titlebar.rs)
+        .with_decorations(false);
     match eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png")) {
         Ok(icon) => viewport = viewport.with_icon(icon),
         Err(e) => log::warn!("Icône illisible : {e}"),

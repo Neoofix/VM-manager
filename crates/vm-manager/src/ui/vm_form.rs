@@ -7,6 +7,7 @@ use super::vms::sorted_groups;
 use super::widgets::*;
 use crate::app::{Command, UiState};
 use crate::forms::VmTab;
+use crate::os_presets::OS_FAMILIES;
 use crate::theme::*;
 
 /// Champ du formulaire réseau : libellé, indication, valeur, exemple
@@ -92,7 +93,7 @@ pub fn show(ui: &Ui, store: &Store, st: &mut UiState) {
                     });
                     ui.columns(2, |c| {
                         labeled(&mut c[0], "Système d'exploitation", None, |ui| {
-                            text_field(ui, &mut form.os, "Debian 13, Windows Server 2025…", false);
+                            os_field(ui, &mut form.os);
                         });
                         labeled(
                             &mut c[1],
@@ -220,4 +221,53 @@ pub fn show(ui: &Ui, store: &Store, st: &mut UiState) {
     } else if cancel || closed {
         st.vm_form = None;
     }
+}
+
+/// Système d'exploitation : saisie libre + menu des systèmes prédéfinis par famille
+fn os_field(ui: &mut Ui, os: &mut String) {
+    const BUTTON_WIDTH: f32 = 34.0;
+    let width = ui.available_width() - BUTTON_WIDTH - ui.spacing().item_spacing.x;
+    // Menus compacts : la famille Linux compte près de 30 entrées
+    let compact = |ui: &mut Ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        ui.spacing_mut().interact_size.y = 24.0;
+        ui.spacing_mut().button_padding = egui::vec2(10.0, 3.0);
+    };
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(os)
+                .hint_text("Debian 13, Windows Server 2025…")
+                .desired_width(width)
+                .margin(egui::Margin::symmetric(8, 6)),
+        );
+        ui.spacing_mut().button_padding.x = 6.0;
+        let button = egui::Button::new(RichText::new("⏷").color(p().text_secondary))
+            .fill(p().bg_secondary)
+            .min_size(egui::vec2(BUTTON_WIDTH, 30.0));
+        egui::containers::menu::MenuButton::from_button(button)
+            .ui(ui, |ui| {
+                compact(ui);
+                ui.set_min_width(170.0);
+                for family in &OS_FAMILIES {
+                    ui.menu_button(format!("{}  {}", family.icon, family.name), |ui| {
+                        compact(ui);
+                        ui.set_min_width(220.0);
+                        let max_height = ui.ctx().content_rect().height() - 40.0;
+                        egui::ScrollArea::vertical()
+                            .max_height(max_height)
+                            .show(ui, |ui| {
+                                for system in family.systems {
+                                    let selected = os.trim() == *system;
+                                    if ui.selectable_label(selected, *system).clicked() {
+                                        *os = system.to_string();
+                                        ui.close();
+                                    }
+                                }
+                            });
+                    });
+                }
+            })
+            .0
+            .on_hover_text("Systèmes prédéfinis");
+    });
 }

@@ -2,6 +2,7 @@
 mod dashboard;
 mod groups;
 mod settings;
+mod titlebar;
 mod vm_detail;
 mod vm_form;
 mod vms;
@@ -25,6 +26,8 @@ const NAV: [(Page, &str, &str); 4] = [
 ];
 
 pub fn show(ui: &mut Ui, store: &Store, data_path: &Path, source: DataSource, st: &mut UiState) {
+    // Barre de titre en premier : elle occupe toute la largeur, au-dessus de la barre latérale
+    titlebar::show(ui, Some(st));
     sidebar(ui, store, st);
 
     egui::CentralPanel::no_frame().show(ui, |ui| {
@@ -54,6 +57,7 @@ pub fn show(ui: &mut Ui, store: &Store, data_path: &Path, source: DataSource, st
     }
     confirm_dialog(ui, st);
     toasts(ui, st);
+    titlebar::resize_handles(ui);
 }
 
 fn sidebar(ui: &mut Ui, store: &Store, st: &mut UiState) {
@@ -216,6 +220,9 @@ fn toasts(ui: &Ui, st: &mut UiState) {
 
 /// Écran affiché si l'inventaire n'a pas pu être chargé
 pub fn load_error(ui: &mut Ui, error: &str, data_path: &Path) {
+    // Sans décorations natives, la barre de titre est le seul moyen de fermer la fenêtre
+    titlebar::show(ui, None);
+    titlebar::resize_handles(ui);
     egui::CentralPanel::default().show(ui, |ui| {
         ui.vertical_centered(|ui| {
             ui.add_space(120.0);

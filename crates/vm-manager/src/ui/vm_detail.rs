@@ -6,6 +6,7 @@ use vm_core::{SshAuthMethod, Store, Vm};
 use super::widgets::*;
 use crate::app::{Command, UiState};
 use crate::forms::{UserForm, VmForm};
+use crate::os_presets::family_of;
 use crate::theme::*;
 
 pub fn auth_label(m: SshAuthMethod) -> &'static str {
@@ -48,7 +49,11 @@ pub fn show(ui: &Ui, store: &Store, st: &mut UiState) {
                     None => chip(ui, "Non classée", p().text_muted),
                 }
                 if !vm.os.is_empty() {
-                    chip(ui, &vm.os, p().text_secondary);
+                    let os = match family_of(&vm.os) {
+                        Some(family) => format!("{} {}", family.icon, vm.os),
+                        None => vm.os.clone(),
+                    };
+                    chip(ui, os, p().text_secondary);
                 }
                 for tag in &vm.tags {
                     chip(ui, tag, p().accent_2);

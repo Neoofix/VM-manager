@@ -6,6 +6,7 @@ use vm_core::{Group, Store, Vm};
 use super::widgets::*;
 use crate::app::{GroupFilter, UiState};
 use crate::forms::VmForm;
+use crate::os_presets::family_of;
 use crate::theme::*;
 
 const CARD_WIDTH: f32 = 290.0;
@@ -223,6 +224,13 @@ fn vm_card(ui: &mut Ui, vm: &Vm, group: Option<&Group>, st: &mut UiState) {
                             .small()
                             .color(p().text_secondary),
                         );
+                        if let Some(family) = family_of(&vm.os) {
+                            chip(
+                                ui,
+                                format!("{} {}", family.icon, family.name),
+                                p().text_secondary,
+                            );
+                        }
                         for tag in &vm.tags {
                             chip(ui, tag, p().accent_2);
                         }
