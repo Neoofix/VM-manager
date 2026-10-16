@@ -4,129 +4,110 @@ Mémo / inventaire de machines virtuelles pour homelab et petites infras : group
 
 > **Purement informatif** : l'application ne démarre, n'arrête ni ne contacte aucune VM ni aucun hyperviseur. Elle sert de fiche mémo centralisée.
 
-Construit avec **Tauri v2** (backend Rust) et **React + TypeScript + Tailwind**, dans le même style que [Server Power Manager](https://github.com/NolanEDUVAUD/server-manager) (interface type Windows 11, thème One Half Dark).
+**100 % Rust** : interface native [egui / eframe](https://github.com/emilk/egui), un seul exécutable, ni Node.js ni navigateur embarqué. Style inspiré de [Server Power Manager](https://github.com/NolanEDUVAUD/server-manager) (barre latérale, cartes, thème One Half Dark).
 
 ## Fonctionnalités
 
-- **Groupes de VM** : création, modification (nom, description, couleur), liste avec les VM membres, suppression — les VM d'un groupe supprimé sont conservées et deviennent « non classées »
+- **Groupes de VM** : création, modification (nom, description, couleur), liste dépliable des VM membres, suppression — les VM d'un groupe supprimé sont conservées et deviennent « non classées »
 - **Fiches VM** : nom, description, groupe, système d'exploitation, étiquettes, notes libres
 - **Réseau** : IP (v4 / v6), nom d'hôte, sous-réseau CIDR, passerelle, VLAN, DNS, adresse MAC, pont / interface hyperviseur — avec validation (IP et passerelle dans le sous-réseau, VLAN 1–4094, MAC…)
-- **Utilisateurs par VM** : ajout, modification, suppression ; nom complet, rôle, droits sudo, notes ; identifiants uniques par VM
+- **Utilisateurs par VM** : ajout, modification, suppression directement dans la fiche ; nom complet, rôle, droits sudo, notes ; identifiants uniques par VM
 - **SSH** : port, utilisateur par défaut, méthode d'authentification (clé, mot de passe, agent…), référence de la clé ou de l'entrée du gestionnaire de mots de passe, notes ; commande `ssh` prête à copier
-- **Recherche** plein texte (nom, IP, VLAN, étiquette, utilisateur…) et filtre par groupe
+- **Recherche** multi-mots (nom, IP, VLAN, étiquette, utilisateur…, insensible à la casse et aux accents) et filtre par groupe
 - **Tableau de bord** : compteurs, répartition par groupe, VM modifiées récemment
-- **Duplication** d'une VM (pratique pour des machines quasi identiques)
-- **Export / import JSON** (fusion ou remplacement)
+- **Duplication** d'une VM, **export / import JSON** (fusion ou remplacement)
 
-## Installation depuis les sources
+## Installation
 
-### 1. Prérequis
+### Prérequis
 
-| Outil | Version |
-|---|---|
-| [Rust](https://rustup.rs) | stable récent (≥ 1.77) |
-| [Node.js](https://nodejs.org) | 20 LTS ou plus |
-| Dépendances système Tauri | voir ci-dessous |
-
-- **Windows** : Visual C++ Build Tools (MSVC) et WebView2 (déjà présent sur Windows 10/11).
-- **Linux (Debian / Ubuntu)** :
-  ```bash
-  sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libsoup-3.0-dev build-essential
-  ```
+- [Rust](https://rustup.rs) stable ≥ 1.95 (`rustup update`).
+- **Windows** : Visual C++ Build Tools (MSVC), installés avec rustup.
+- **Linux** : rien à compiler en plus. À l'exécution : un serveur X11 ou Wayland avec OpenGL, et `xdg-desktop-portal` pour les fenêtres d'export / import (présent sur les bureaux courants).
 - **macOS** : `xcode-select --install`.
 
-Détails : [prérequis Tauri v2](https://v2.tauri.app/start/prerequisites/).
-
-### 2. Récupérer le projet
+### Compiler et lancer
 
 ```bash
 git clone https://github.com/Neoofix/VM-manager.git
 cd VM-manager
-npm install
+cargo run --release
 ```
 
-### 3. Lancer en développement
+L'exécutable est produit dans `target/release/vm-manager` (`vm-manager.exe` sous Windows) : il peut être copié n'importe où, il ne dépend d'aucun autre fichier.
 
-```bash
-npm run tauri dev
-```
+## Où sont stockées les données ?
 
-La première compilation Rust prend quelques minutes ; les suivantes sont rapides.
+L'application est **portable** : par défaut, l'inventaire est enregistré dans **`vm-manager.json`, à côté de l'exécutable**. Copier le dossier (exécutable + JSON) sur une clé USB ou un autre PC suffit à tout emporter.
 
-### 4. Construire un installateur
+Ordre de priorité pour choisir le fichier :
 
-```bash
-npm run tauri build
-```
+| Priorité | Source | Exemple |
+|---|---|---|
+| 1 | Argument `--data` | `vm-manager --data D:\Infra\inventaire.json` |
+| 2 | Variable d'environnement `VM_MANAGER_DATA` | `VM_MANAGER_DATA=~/Nextcloud/vms.json vm-manager` |
+| 3 | Dossier de l'exécutable | `C:\Outils\VM Manager\vm-manager.json` |
+| 4 | Dossier courant, si celui de l'exécutable n'est pas modifiable (ex. `Program Files`, `/usr/bin`) | `./vm-manager.json` |
 
-Les paquets (`.exe` / `.msi` sous Windows, `.deb` / `.AppImage` / `.rpm` sous Linux, `.dmg` sous macOS) sont générés dans `target/release/bundle/`.
+Le chemin réellement utilisé et sa source sont affichés dans **Paramètres**.
+
+> Avec `cargo run`, l'exécutable est dans `target/…` : le fichier y serait créé (et effacé par `cargo clean`). En développement, préfère `cargo run -- --data ./vm-manager.json`.
+
+Chaque modification est écrite immédiatement, de façon atomique (fichier temporaire puis renommage). Si le fichier est illisible au démarrage, il est **mis de côté** (`vm-manager.json.corrupt-<date>`) plutôt qu'écrasé, et un avertissement s'affiche dans les Paramètres. Un fichier écrit par une version plus récente de l'application est refusé plutôt qu'abîmé.
+
+> ⚠️ **Sécurité** : le fichier JSON n'est **pas chiffré**. N'y enregistre jamais de mot de passe ni de clé privée — note seulement *où* les trouver (chemin de la clé, entrée Bitwarden / KeePass…). C'est l'usage prévu du champ « Référence de la clé / du secret ».
 
 ## Utilisation
 
 1. **Groupes** → *Créer un groupe* (ex. « Production », « Lab », « Client A ») et choisis une couleur.
-2. **Machines virtuelles** → *Nouvelle VM* : le formulaire a trois onglets — *Général*, *Réseau*, *SSH*. Seul le nom est obligatoire.
-3. Clique sur une carte pour ouvrir la **fiche** : toutes les infos, boutons de copie (IP, MAC, commande SSH…), gestion des **utilisateurs** (ajout / modification / suppression en place), puis *Modifier*, *Dupliquer* ou *Supprimer*.
-4. La barre de recherche accepte plusieurs mots (`prod 192.168.10`, `vlan 20`, `deploy`…), insensibles à la casse et aux accents.
-5. **Paramètres** : emplacement du fichier de données, export / import.
+2. **Machines virtuelles** → *Nouvelle VM* : formulaire à trois onglets — *Général*, *Réseau*, *SSH*. Seul le nom est obligatoire. En cas d'erreur, le formulaire bascule sur l'onglet concerné.
+3. Clique sur une carte pour ouvrir la **fiche** : toutes les infos, boutons de copie (IP, MAC, commande SSH…), gestion des **utilisateurs**, puis *Modifier*, *Dupliquer* ou *Supprimer*.
+4. La recherche accepte plusieurs mots : `prod 192.168.10`, `vlan 20`, `deploy`…
+5. **Paramètres** : emplacement du fichier, export / import.
 
-### Où sont stockées les données ?
-
-Dans `data.json`, dans le dossier de données de l'application :
-
-| Système | Emplacement |
-|---|---|
-| Windows | `%APPDATA%\com.homelab.vm-manager\data.json` |
-| Linux | `~/.local/share/com.homelab.vm-manager/data.json` |
-| macOS | `~/Library/Application Support/com.homelab.vm-manager/data.json` |
-
-La variable d'environnement `VM_MANAGER_DATA` permet d'utiliser un autre fichier (ex. dans un dossier synchronisé) :
-
-```bash
-VM_MANAGER_DATA=~/Nextcloud/vm-inventaire.json npm run tauri dev
-```
-
-Chaque modification est écrite immédiatement, de façon atomique (fichier temporaire puis renommage). Si le fichier est illisible au démarrage, il est **mis de côté** (`data.json.corrupt-<date>`) plutôt qu'écrasé, et un avertissement s'affiche dans les Paramètres.
-
-> ⚠️ **Sécurité** : le fichier JSON n'est **pas chiffré**. N'y enregistre jamais de mot de passe ni de clé privée — note seulement *où* les trouver (chemin de la clé, entrée Bitwarden / KeePass…). C'est l'usage prévu du champ « Référence de la clé / du secret ».
+Raccourcis : `Échap` ferme la fenêtre ouverte, `Entrée` valide les formulaires de groupe et d'utilisateur.
 
 ## Architecture
 
 ```
-VM-manager/
-├── crates/vm-core/        Cœur Rust, sans dépendance à Tauri
+VM-manager/                     workspace Cargo
+├── crates/vm-core/             cœur métier, sans interface graphique
 │   └── src/
-│       ├── models.rs      Group, Vm, NetworkInfo, SshInfo, VmUser (+ *Input)
-│       ├── validation.rs  Nettoyage et validation des saisies (IP, CIDR, VLAN, MAC…)
-│       ├── store.rs       Persistance JSON transactionnelle, CRUD, import/export
-│       └── error.rs       Erreurs typées (messages en français)
-├── src-tauri/             Application Tauri : commandes fines autour de vm-core
-│   └── src/commands/      inventory, groups, vms, users
-└── src/                   Frontend React + TypeScript + Tailwind
-    ├── pages/             Dashboard, Vms, Groups, Settings
-    ├── components/        Layout, VmCard, VmDetail, VmForm, VmUsers, GroupForm, Modal…
-    ├── stores/            État global (zustand) et notifications
-    └── api.ts             Appels aux commandes Tauri
+│       ├── models.rs           Group, Vm, NetworkInfo, SshInfo, VmUser (+ *Input)
+│       ├── validation.rs       nettoyage et validation (IP, CIDR, VLAN, MAC, identifiants…)
+│       ├── store.rs            persistance JSON transactionnelle, CRUD, import / export
+│       ├── query.rs            recherche plein texte, commande SSH
+│       └── error.rs            erreurs typées (messages en français)
+└── crates/vm-manager/          application de bureau (eframe / egui)
+    ├── assets/icon.png
+    └── src/
+        ├── main.rs             démarrage, fenêtre
+        ├── paths.rs            choix du fichier de données (mode portable)
+        ├── app.rs              état de l'interface et application des commandes
+        ├── forms.rs            états des formulaires (saisie → modèles du cœur)
+        ├── theme.rs            palette One Half Dark
+        └── ui/                 écrans : dashboard, vms, vm_detail, vm_form, groups, settings, widgets
 ```
 
-Toute la logique métier (validation, unicité des noms, intégrité des références de groupe, écriture atomique) vit dans `vm-core` : elle est testée seule, sans interface graphique. Une opération qui échoue (validation ou écriture disque) ne modifie ni la mémoire ni le fichier.
+- Toute la logique métier (validation, unicité des noms, intégrité des références de groupe, écriture atomique) vit dans `vm-core` : elle est testée seule. Une opération qui échoue (validation ou écriture disque) ne modifie ni la mémoire ni le fichier.
+- L'interface est en mode immédiat : les écrans lisent l'inventaire et déposent des `Command` (enregistrer, supprimer, dupliquer…) que `app.rs` applique après l'affichage, en renvoyant les erreurs dans le formulaire concerné.
 
 ### Règles de gestion
 
 - Noms de groupe et de VM **uniques** (insensible à la casse) ; identifiants d'utilisateur uniques par VM.
 - Sous-réseau enregistré sous sa forme canonique (`192.168.10.77/24` → `192.168.10.0/24`) ; l'IP et la passerelle doivent lui appartenir.
 - MAC normalisée en minuscules avec `:` ; étiquettes et DNS dédoublonnés.
-- Le format du fichier est versionné (`"version": 1`) : un fichier écrit par une version plus récente est refusé plutôt qu'abîmé.
 
-## Tests
+## Développement
 
 ```bash
-cargo test -p vm-core        # cœur Rust : validation, persistance, CRUD, import/export
-npm test                     # utilitaires frontend (recherche, commande SSH…)
+cargo test --workspace                                  # cœur + logique de l'application
 cargo clippy --workspace --all-targets -- -D warnings
-npm run build                # vérification TypeScript + build Vite
+cargo fmt --all
+cargo run -- --data ./vm-manager.json                   # lancer avec un inventaire local
 ```
 
-La CI GitHub Actions (`.github/workflows/ci.yml`) exécute ces vérifications à chaque push sur `main` / `dev`.
+La CI GitHub Actions (`.github/workflows/ci.yml`) vérifie format, Clippy, tests et compilation release sous Linux et Windows à chaque push sur `main` / `dev`.
 
 ## Licence
 

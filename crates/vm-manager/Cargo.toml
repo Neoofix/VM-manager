@@ -1,0 +1,23 @@
+[package]
+name = "vm-manager"
+description = "VM Manager - mémo et inventaire de machines virtuelles (interface egui)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "vm-manager"
+path = "src/main.rs"
+
+[dependencies]
+vm-core = { path = "../vm-core" }
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "glow", "wayland", "x11"] }
+egui = { version = "0.37", features = ["monochrome_emoji_fonts"] }
+rfd = "0.17"
+log.workspace = true
+env_logger = "0.11"
+chrono.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

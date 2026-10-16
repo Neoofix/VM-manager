@@ -1,6 +1,5 @@
 /target
-node_modules/
-dist/
-src-tauri/gen/
+# Inventaire créé à côté de l'exécutable ou dans le dossier courant
+vm-manager.json
 *.log
 .DS_Store
