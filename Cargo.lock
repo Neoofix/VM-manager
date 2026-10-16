@@ -3430,6 +3430,7 @@ dependencies = [
  "eframe",
  "egui",
  "env_logger",
+ "getrandom 0.4.3",
  "log",
  "rfd",
  "serde",
@@ -3437,6 +3438,7 @@ dependencies = [
  "tempfile",
  "vm-core",
  "winresource",
+ "zeroize",
 ]
 
 [[package]]

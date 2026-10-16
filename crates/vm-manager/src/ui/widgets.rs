@@ -144,6 +144,65 @@ pub fn text_field(
     ui.add(edit)
 }
 
+/// Texte affiché à la place d'un mot de passe masqué
+pub const MASK: &str = "••••••••";
+
+/// Champ de mot de passe masqué, suivi d'un bouton 👁 qui l'affiche en clair.
+/// `reserve` : largeur laissée à droite pour d'autres boutons sur la même ligne.
+pub fn password_field(
+    ui: &mut Ui,
+    value: &mut String,
+    reveal: &mut bool,
+    placeholder: &str,
+    reserve: f32,
+) -> egui::Response {
+    ui.horizontal(|ui| {
+        let width = (ui.available_width() - reserve - 34.0).max(80.0);
+        let edit = TextEdit::singleline(value)
+            .password(!*reveal)
+            .hint_text(placeholder)
+            .font(egui::TextStyle::Monospace)
+            .desired_width(width)
+            .margin(Margin::symmetric(8, 6));
+        let response = ui.add(edit);
+        let tooltip = if *reveal {
+            "Masquer le mot de passe"
+        } else {
+            "Afficher le mot de passe"
+        };
+        let eye = RichText::new("👁").color(if *reveal {
+            p().accent_fg
+        } else {
+            p().text_secondary
+        });
+        if ui
+            .add(Button::new(eye).frame(false))
+            .on_hover_text(tooltip)
+            .clicked()
+        {
+            *reveal = !*reveal;
+        }
+        response
+    })
+    .inner
+}
+
+/// Encadré d'avertissement (couleur d'alerte du thème)
+pub fn warning_box(ui: &mut Ui, text: &str) {
+    Frame::new()
+        .fill(p().warning.linear_multiply(0.08))
+        .stroke(Stroke::new(1.0, p().warning.linear_multiply(0.5)))
+        .corner_radius(CornerRadius::same(RADIUS))
+        .inner_margin(Margin::symmetric(12, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_top(|ui| {
+                ui.label(RichText::new("⚠").color(p().warning));
+                ui.add(egui::Label::new(RichText::new(text).color(p().warning)).wrap());
+            });
+        });
+}
+
 pub fn text_area(ui: &mut Ui, value: &mut String, placeholder: &str, rows: usize, mono: bool) {
     let mut edit = TextEdit::multiline(value)
         .hint_text(placeholder)

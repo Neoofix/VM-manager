@@ -14,7 +14,7 @@ fn main() -> eframe::Result {
 
     let (data_path, source) = paths::resolve();
     log::info!("Fichier de données : {data_path:?} ({})", source.label());
-    let store = vm_core::Store::open(&data_path).map_err(|e| e.to_string());
+    let store = app::StoreState::from_open(vm_core::Store::open(&data_path));
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("VM Manager")

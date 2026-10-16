@@ -3,10 +3,13 @@ mod dashboard;
 mod groups;
 mod settings;
 mod titlebar;
+mod vault;
 mod vm_detail;
 mod vm_form;
 mod vms;
 pub mod widgets;
+
+pub use vault::unlock_screen;
 
 use std::path::Path;
 
@@ -27,7 +30,7 @@ const NAV: [(Page, &str, &str); 4] = [
 
 pub fn show(ui: &mut Ui, store: &Store, data_path: &Path, source: DataSource, st: &mut UiState) {
     // Barre de titre en premier : elle occupe toute la largeur, au-dessus de la barre latérale
-    titlebar::show(ui, Some(st));
+    titlebar::show(ui, Some((store, &mut *st)));
     sidebar(ui, store, st);
 
     egui::CentralPanel::no_frame().show(ui, |ui| {
@@ -56,6 +59,8 @@ pub fn show(ui: &mut Ui, store: &Store, data_path: &Path, source: DataSource, st
         groups::form(ui, st);
     }
     confirm_dialog(ui, st);
+    // Coffre en dernier : il s'ouvre par-dessus la fiche ou le formulaire qui l'a demandé
+    vault::dialog(ui, st);
     toasts(ui, st);
     titlebar::resize_handles(ui);
 }

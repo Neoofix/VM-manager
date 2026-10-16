@@ -9,6 +9,8 @@ use egui::{
     Shape, Stroke, StrokeKind, Ui, Vec2, ViewportCommand,
 };
 
+use vm_core::Store;
+
 use super::widgets::{color_dot, section_title};
 use super::NAV;
 use crate::app::{Command, Page, UiState};
@@ -30,8 +32,9 @@ enum Control {
 }
 
 /// Affiche la barre en haut de la fenêtre, au-dessus de la barre latérale et de la page.
-/// Sans état (`None`, écran d'erreur de chargement) : seulement le titre et les contrôles.
-pub fn show(ui: &mut Ui, st: Option<&mut UiState>) {
+/// Sans inventaire (`None` : écran d'erreur de chargement ou de déverrouillage) :
+/// seulement le titre et les contrôles.
+pub fn show(ui: &mut Ui, app: Option<(&Store, &mut UiState)>) {
     egui::Panel::top("titlebar")
         .exact_size(HEIGHT)
         .resizable(false)
@@ -65,7 +68,7 @@ pub fn show(ui: &mut Ui, st: Option<&mut UiState>) {
                 ui.add_space(14.0);
                 ui.label(RichText::new("🖧").size(15.0).color(p().accent_fg));
                 ui.label(RichText::new("VM Manager").strong().color(p().text_strong));
-                if let Some(page) = st.as_ref().map(|st| st.page) {
+                if let Some(page) = app.as_ref().map(|(_, st)| st.page) {
                     ui.label(RichText::new("›").color(p().text_muted));
                     ui.label(RichText::new(page_name(page)).color(p().text_secondary));
                 }
@@ -83,9 +86,9 @@ pub fn show(ui: &mut Ui, st: Option<&mut UiState>) {
                             }
                         }
                     });
-                    if let Some(st) = st {
+                    if let Some((store, st)) = app {
                         ui.add_space(6.0);
-                        quick_actions(ui, st);
+                        quick_actions(ui, store, st);
                     }
                 });
             });
@@ -100,12 +103,12 @@ fn page_name(page: Page) -> &'static str {
 }
 
 /// Actions rapides, de droite à gauche : coffre, thème, nouvelle VM
-fn quick_actions(ui: &mut Ui, st: &mut UiState) {
+fn quick_actions(ui: &mut Ui, store: &Store, st: &mut UiState) {
     ui.spacing_mut().interact_size.y = 26.0;
     ui.spacing_mut().button_padding = egui::vec2(10.0, 3.0);
     ui.spacing_mut().item_spacing.x = 6.0;
 
-    vault_button(ui, st);
+    vault_button(ui, store, st);
     theme_menu(ui, st);
 
     let new_vm = Button::new(
@@ -125,8 +128,41 @@ fn quick_actions(ui: &mut Ui, st: &mut UiState) {
     }
 }
 
-// coffre : bouton ajouté plus tard (verrouillage du coffre chiffré)
-fn vault_button(_ui: &mut Ui, _st: &mut UiState) {}
+/// Cadenas du coffre : verrouille immédiatement, ou ouvre le déverrouillage
+/// (la création si aucun coffre n'existe encore)
+fn vault_button(ui: &mut Ui, store: &Store, st: &mut UiState) {
+    let exists = store.vault().is_some();
+    let unlocked = st.is_unlocked();
+    let (icon, color, tooltip) = if unlocked {
+        (
+            "🔓",
+            p().success,
+            "Coffre déverrouillé — cliquer pour le verrouiller maintenant\n(verrouillage automatique après 10 minutes d'inactivité)",
+        )
+    } else if exists {
+        (
+            "🔒",
+            p().text_secondary,
+            "Coffre verrouillé — cliquer pour le déverrouiller\net accéder aux mots de passe enregistrés",
+        )
+    } else {
+        (
+            "🔒",
+            p().text_muted,
+            "Aucun coffre — cliquer pour créer le coffre\ndes mots de passe (mot de passe maître)",
+        )
+    };
+    let button = Button::new(RichText::new(icon).color(color))
+        .frame_when_inactive(false)
+        .min_size(Vec2::new(32.0, 26.0));
+    if ui.add(button).on_hover_text(tooltip).clicked() {
+        if unlocked {
+            st.run(Command::LockVault);
+        } else {
+            st.ask_unlock(exists, None);
+        }
+    }
+}
 
 /// Menu de choix du thème ; le choix passe par `Command::SetTheme` pour être enregistré
 fn theme_menu(ui: &mut Ui, st: &mut UiState) {

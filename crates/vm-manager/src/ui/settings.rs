@@ -1,4 +1,4 @@
-/// Paramètres : emplacement du fichier de données, export / import
+/// Paramètres : apparence, sécurité (coffre, chiffrement), fichier de données, export / import
 use std::path::Path;
 
 use egui::{RichText, Ui};
@@ -6,6 +6,7 @@ use vm_core::Store;
 
 use super::widgets::*;
 use crate::app::{Command, Confirm, UiState};
+use crate::forms::{VaultForm, VaultMode};
 use crate::paths::{DataSource, DATA_ENV};
 use crate::theme::{self, *};
 
@@ -35,6 +36,8 @@ pub fn show(ui: &mut Ui, store: &Store, data_path: &Path, source: DataSource, st
     }
 
     appearance(ui, st);
+    ui.add_space(4.0);
+    security(ui, store, st);
     ui.add_space(4.0);
 
     card_frame().show(ui, |ui| {
@@ -106,9 +109,147 @@ pub fn show(ui: &mut Ui, store: &Store, data_path: &Path, source: DataSource, st
             .color(p().text_secondary),
         );
         ui.label(
-            RichText::new("Le fichier JSON n'est pas chiffré : n'y note jamais de mot de passe ni de clé privée, seulement où les trouver.")
-                .color(p().warning),
+            RichText::new(
+                "Les mots de passe des utilisateurs sont chiffrés par le coffre ; le reste de l'inventaire n'est chiffré que si \
+                 « Chiffrer tout le fichier de données » est activé. N'y note jamais de clé privée, seulement où la trouver. \
+                 Mot de passe maître oublié = mots de passe (et inventaire chiffré) irrécupérables.",
+            )
+            .color(p().warning),
         );
+    });
+}
+
+/// Coffre des mots de passe et chiffrement du fichier de données
+fn security(ui: &mut Ui, store: &Store, st: &mut UiState) {
+    let exists = store.vault().is_some();
+    let unlocked = st.is_unlocked();
+    let encrypted = store.is_file_encrypted();
+    let count = store.password_count();
+
+    card_frame().show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.label(RichText::new("🛡  Sécurité").strong().color(p().text_strong));
+        ui.label(
+            RichText::new(
+                "Les mots de passe des utilisateurs sont chiffrés (Argon2id + XChaCha20-Poly1305) avec un \
+                 mot de passe maître unique, jamais enregistré. Le coffre se verrouille après 10 minutes d'inactivité.",
+            )
+            .color(p().text_secondary),
+        );
+        ui.add_space(2.0);
+
+        inset_frame().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let (icon, status, color) = match (exists, unlocked) {
+                    (false, _) => ("🔒", "Aucun coffre".to_string(), p().text_muted),
+                    (true, false) => ("🔒", "Coffre verrouillé".to_string(), p().text_strong),
+                    (true, true) => ("🔓", "Coffre déverrouillé".to_string(), p().success),
+                };
+                ui.label(RichText::new(icon).color(color));
+                ui.label(RichText::new(status).strong().color(color));
+                if exists {
+                    chip(
+                        ui,
+                        format!("🔑 {count} mot{} de passe", if count > 1 { "s" } else { "" }),
+                        p().text_secondary,
+                    );
+                }
+                if encrypted {
+                    chip(ui, "fichier chiffré", p().accent_fg);
+                }
+            });
+            if !exists {
+                ui.label(
+                    RichText::new(
+                        "Crée le coffre pour enregistrer les mots de passe des utilisateurs des VM.",
+                    )
+                    .small()
+                    .color(p().text_secondary),
+                );
+            }
+        });
+
+        ui.horizontal(|ui| {
+            if !exists {
+                if primary_button(ui, "🔑  Créer le coffre").clicked() {
+                    st.vault_form = Some(VaultForm::new(VaultMode::Create));
+                }
+            } else {
+                if unlocked {
+                    if ghost_button(ui, "🔒  Verrouiller").clicked() {
+                        st.run(Command::LockVault);
+                    }
+                } else if primary_button(ui, "🔓  Déverrouiller").clicked() {
+                    st.ask_unlock(true, None);
+                }
+                if ghost_button(ui, "Changer le mot de passe maître").clicked() {
+                    st.vault_form = Some(VaultForm::new(VaultMode::ChangeMaster));
+                }
+            }
+        });
+
+        ui.add_space(4.0);
+        ui.separator();
+        let mut wanted = encrypted;
+        if ui
+            .checkbox(&mut wanted, "Chiffrer tout le fichier de données")
+            .changed()
+        {
+            let mut form = VaultForm::new(if wanted {
+                VaultMode::EnableFileEncryption
+            } else {
+                VaultMode::DisableFileEncryption
+            });
+            form.new_vault = !exists;
+            st.vault_form = Some(form);
+        }
+        ui.label(
+            RichText::new(if encrypted {
+                "Tout l'inventaire est chiffré : le mot de passe maître est demandé à chaque lancement, et les exports sont chiffrés."
+            } else {
+                "Chiffre aussi les VM, adresses, utilisateurs et notes : le mot de passe maître sera alors demandé à chaque lancement de l'application."
+            })
+            .small()
+            .color(p().text_secondary),
+        );
+
+        if exists {
+            ui.add_space(4.0);
+            ui.separator();
+            ui.horizontal(|ui| {
+                let reset = ui
+                    .add_enabled_ui(!encrypted, |ui| danger_button(ui, "Réinitialiser le coffre"))
+                    .inner;
+                if reset.clicked() {
+                    st.confirm = Some(Confirm {
+                        title: "Réinitialiser le coffre".into(),
+                        message: format!(
+                            "{}\nÀ n'utiliser qu'en cas d'oubli du mot de passe maître : un nouveau coffre pourra ensuite être créé.",
+                            match count {
+                                0 => "Le coffre sera supprimé (aucun mot de passe enregistré).".to_string(),
+                                1 => "Le coffre et le mot de passe enregistré seront supprimés définitivement.".to_string(),
+                                n => format!("Le coffre et les {n} mots de passe enregistrés seront supprimés définitivement."),
+                            }
+                        ),
+                        button: "Réinitialiser",
+                        command: Command::ResetVault,
+                    });
+                }
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(if encrypted {
+                            "Désactive d'abord le chiffrement du fichier pour pouvoir réinitialiser le coffre."
+                        } else {
+                            "Mot de passe maître oublié : supprime le coffre et tous les mots de passe enregistrés."
+                        })
+                        .small()
+                        .color(p().text_muted),
+                    )
+                    .wrap(),
+                );
+            });
+        }
     });
 }
 

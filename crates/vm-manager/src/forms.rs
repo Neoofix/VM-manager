@@ -1,10 +1,16 @@
 /// États des formulaires : champs texte librement éditables, convertis en
 /// saisies `vm-core` à l'enregistrement (la validation métier reste dans le cœur)
+use std::path::PathBuf;
+
+use vm_core::vault::validate_master_password;
 use vm_core::{
     Group, GroupInput, NetworkInfo, SshAuthMethod, SshInfo, Vm, VmInput, VmUser, VmUserInput,
     DEFAULT_SSH_PORT,
 };
 
+use zeroize::Zeroizing;
+
+use crate::app::Command;
 use crate::theme::GROUP_COLORS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -210,8 +216,24 @@ pub struct UserForm {
     pub role: String,
     pub sudo: bool,
     pub notes: String,
+    /// Nouveau mot de passe ; vide = ne rien changer (effacé de la mémoire à la fermeture)
+    pub password: Zeroizing<String>,
+    /// Affiche le mot de passe saisi en clair
+    pub show_password: bool,
+    /// L'utilisateur modifié a déjà un mot de passe enregistré
+    pub has_password: bool,
+    /// Supprimer le mot de passe enregistré
+    pub remove_password: bool,
     pub error: Option<String>,
     pub focused: bool,
+}
+
+/// Changement de mot de passe demandé par le formulaire d'utilisateur
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasswordChange<'a> {
+    Keep,
+    Set(&'a str),
+    Remove,
 }
 
 impl UserForm {
@@ -231,8 +253,8 @@ impl UserForm {
             role: u.role.clone(),
             sudo: u.sudo,
             notes: u.notes.clone(),
-            error: None,
-            focused: false,
+            has_password: u.password.is_some(),
+            ..Default::default()
         }
     }
 
@@ -243,6 +265,151 @@ impl UserForm {
             role: self.role.clone(),
             sudo: self.sudo,
             notes: self.notes.clone(),
+        }
+    }
+
+    /// Ce qu'il faut faire du mot de passe à l'enregistrement
+    pub fn password_change(&self) -> PasswordChange<'_> {
+        if self.remove_password && self.has_password {
+            PasswordChange::Remove
+        } else if self.password.is_empty() {
+            PasswordChange::Keep
+        } else {
+            PasswordChange::Set(self.password.as_str())
+        }
+    }
+}
+
+// ── Coffre des mots de passe ──────────────────────────────────────────────
+
+/// Action demandée par la fenêtre du coffre
+#[derive(Debug, Clone, PartialEq)]
+pub enum VaultMode {
+    /// Création du coffre (mot de passe + confirmation)
+    Create,
+    Unlock,
+    /// Ancien, nouveau et confirmation
+    ChangeMaster,
+    EnableFileEncryption,
+    DisableFileEncryption,
+    /// Ouverture au démarrage d'un inventaire entièrement chiffré
+    OpenFile,
+    /// Import d'un fichier exporté chiffré : mot de passe maître de ce fichier
+    Import {
+        path: PathBuf,
+        replace: bool,
+    },
+}
+
+/// Fenêtre de saisie du mot de passe maître
+#[derive(Debug, Clone)]
+pub struct VaultForm {
+    pub mode: VaultMode,
+    /// Mot de passe maître (actuel, ou nouveau à la création)
+    pub password: Zeroizing<String>,
+    /// Nouveau mot de passe maître (changement)
+    pub new_password: Zeroizing<String>,
+    pub confirm: Zeroizing<String>,
+    /// Affiche les saisies en clair
+    pub reveal: bool,
+    /// Chiffrement du fichier sans coffre existant : le coffre est créé avec ce
+    /// mot de passe, qui doit donc être confirmé
+    pub new_vault: bool,
+    pub error: Option<String>,
+    pub focused: bool,
+    /// Commande relancée une fois le coffre déverrouillé (ex. enregistrer un utilisateur)
+    pub then: Option<Box<Command>>,
+}
+
+impl VaultForm {
+    pub fn new(mode: VaultMode) -> Self {
+        VaultForm {
+            mode,
+            password: Zeroizing::default(),
+            new_password: Zeroizing::default(),
+            confirm: Zeroizing::default(),
+            reveal: false,
+            new_vault: false,
+            error: None,
+            focused: false,
+            then: None,
+        }
+    }
+
+    /// Déverrouillage, ou création si aucun coffre n'existe encore
+    pub fn unlock_or_create(vault_exists: bool) -> Self {
+        Self::new(if vault_exists {
+            VaultMode::Unlock
+        } else {
+            VaultMode::Create
+        })
+    }
+
+    /// Mot de passe maître qui deviendra effectif (création ou changement)
+    fn chosen(&self) -> &str {
+        match self.mode {
+            VaultMode::ChangeMaster => &self.new_password,
+            _ => &self.password,
+        }
+    }
+
+    /// Un nouveau mot de passe maître est choisi : il faut le confirmer
+    pub fn creates_password(&self) -> bool {
+        match self.mode {
+            VaultMode::Create | VaultMode::ChangeMaster => true,
+            VaultMode::EnableFileEncryption => self.new_vault,
+            _ => false,
+        }
+    }
+
+    /// Vérifications locales avant d'appeler le cœur (longueur, confirmation)
+    pub fn check(&self) -> Result<(), String> {
+        if self.password.is_empty() {
+            return Err("Saisissez le mot de passe maître".into());
+        }
+        if self.creates_password() {
+            validate_master_password(self.chosen()).map_err(|e| e.to_string())?;
+            if self.chosen() != self.confirm.as_str() {
+                return Err("La confirmation ne correspond pas au mot de passe".into());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Longueur des mots de passe générés
+pub const GENERATED_LEN: usize = 20;
+
+/// Caractères des mots de passe générés : sans les caractères ambigus (0 O o 1 l I |)
+/// ni ceux qui posent problème dans un shell ou une URL (guillemets, antislash, espace)
+pub const PASSWORD_CHARSET: &[u8] =
+    b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!#$%&*+-=?@^_~";
+
+/// Mot de passe aléatoire de [`GENERATED_LEN`] caractères, tiré du générateur du
+/// système, avec au moins une majuscule, une minuscule, un chiffre et un symbole
+pub fn generate_password() -> Result<Zeroizing<String>, String> {
+    // Plus grand multiple de la taille du jeu de caractères : tirage sans biais
+    let limit = 256 - 256 % PASSWORD_CHARSET.len();
+    loop {
+        let mut out = Zeroizing::new(String::with_capacity(GENERATED_LEN));
+        let mut buf = Zeroizing::new([0u8; 64]);
+        while out.len() < GENERATED_LEN {
+            getrandom::fill(buf.as_mut_slice())
+                .map_err(|e| format!("Générateur aléatoire indisponible ({e})"))?;
+            for &b in buf.iter().filter(|&&b| (b as usize) < limit) {
+                if out.len() == GENERATED_LEN {
+                    break;
+                }
+                out.push(PASSWORD_CHARSET[b as usize % PASSWORD_CHARSET.len()] as char);
+            }
+        }
+        let has = |f: fn(&char) -> bool| out.chars().any(|c| f(&c));
+        if has(char::is_ascii_uppercase)
+            && has(char::is_ascii_lowercase)
+            && has(char::is_ascii_digit)
+            && has(char::is_ascii_punctuation)
+        {
+            return Ok(out);
         }
     }
 }
@@ -299,6 +466,72 @@ mod tests {
         assert_eq!(f.to_input().unwrap_err().0, VmTab::Ssh);
         f.port.clear();
         assert_eq!(f.to_input().unwrap().ssh.port, 22);
+    }
+
+    #[test]
+    fn generated_passwords() {
+        let a = generate_password().unwrap();
+        let b = generate_password().unwrap();
+        assert_ne!(a.as_str(), b.as_str());
+        for pw in [&a, &b] {
+            assert_eq!(pw.chars().count(), GENERATED_LEN);
+            assert!(pw.bytes().all(|c| PASSWORD_CHARSET.contains(&c)));
+            assert!(!pw.contains(['0', 'O', 'o', '1', 'l', 'I', '|', '"', '\'', ' ']));
+            assert!(pw.chars().any(|c| c.is_ascii_uppercase()));
+            assert!(pw.chars().any(|c| c.is_ascii_lowercase()));
+            assert!(pw.chars().any(|c| c.is_ascii_digit()));
+            assert!(pw.chars().any(|c| c.is_ascii_punctuation()));
+        }
+        // Jeu de caractères sans doublon
+        let mut set = PASSWORD_CHARSET.to_vec();
+        set.sort_unstable();
+        set.dedup();
+        assert_eq!(set.len(), PASSWORD_CHARSET.len());
+    }
+
+    #[test]
+    fn user_form_password_change() {
+        let mut f = UserForm::create("vm");
+        assert_eq!(f.password_change(), PasswordChange::Keep);
+        f.password = Zeroizing::new("s3cret".into());
+        assert_eq!(f.password_change(), PasswordChange::Set("s3cret"));
+        // Rien à supprimer sans mot de passe enregistré
+        f.remove_password = true;
+        assert_eq!(f.password_change(), PasswordChange::Set("s3cret"));
+        f.has_password = true;
+        assert_eq!(f.password_change(), PasswordChange::Remove);
+    }
+
+    #[test]
+    fn vault_form_checks() {
+        let mut f = VaultForm::new(VaultMode::Create);
+        assert!(f.check().is_err());
+        f.password = Zeroizing::new("court".into());
+        f.confirm = Zeroizing::new("court".into());
+        assert!(f.check().unwrap_err().contains('8'));
+        f.password = Zeroizing::new("assez-long".into());
+        assert!(f.check().unwrap_err().contains("confirmation"));
+        f.confirm = Zeroizing::new("assez-long".into());
+        assert!(f.check().is_ok());
+
+        let mut f = VaultForm::new(VaultMode::ChangeMaster);
+        f.password = Zeroizing::new("x".into());
+        f.new_password = Zeroizing::new("nouveau-mdp".into());
+        f.confirm = Zeroizing::new("nouveau-mdp".into());
+        assert!(f.check().is_ok());
+        f.confirm = Zeroizing::new("autre".into());
+        assert!(f.check().is_err());
+
+        let mut f = VaultForm::new(VaultMode::Unlock);
+        f.password = Zeroizing::new("x".into());
+        assert!(f.check().is_ok());
+
+        // Chiffrement du fichier : confirmation exigée seulement si le coffre est à créer
+        let mut f = VaultForm::new(VaultMode::EnableFileEncryption);
+        f.password = Zeroizing::new("x".into());
+        assert!(f.check().is_ok());
+        f.new_vault = true;
+        assert!(f.check().is_err());
     }
 
     #[test]

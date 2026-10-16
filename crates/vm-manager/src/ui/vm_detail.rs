@@ -1,11 +1,11 @@
 /// Fiche d'une VM : réseau, SSH, utilisateurs (gérés en place), notes
 use egui::{RichText, Ui};
 use vm_core::query::ssh_command;
-use vm_core::{SshAuthMethod, Store, Vm};
+use vm_core::{SshAuthMethod, Store, Vm, VmUser};
 
 use super::widgets::*;
 use crate::app::{Command, UiState};
-use crate::forms::{UserForm, VmForm};
+use crate::forms::{generate_password, UserForm, VmForm};
 use crate::os_presets::family_of;
 use crate::theme::*;
 
@@ -108,7 +108,7 @@ pub fn show(ui: &Ui, store: &Store, st: &mut UiState) {
             ui.add_space(10.0);
 
             section_title(ui, &format!("Utilisateurs ({})", vm.users.len()));
-            users(ui, vm, st, &mut action);
+            users(ui, store, vm, st, &mut action);
 
             if !vm.notes.is_empty() {
                 ui.add_space(10.0);
@@ -193,7 +193,7 @@ fn grid(ui: &mut Ui, id: &str, rows: &[(&str, &str, bool)]) {
         });
 }
 
-fn users(ui: &mut Ui, vm: &Vm, st: &mut UiState, action: &mut Option<Action>) {
+fn users(ui: &mut Ui, store: &Store, vm: &Vm, st: &mut UiState, action: &mut Option<Action>) {
     let editing_this_vm = st.user_form.as_ref().is_some_and(|f| f.vm_id == vm.id);
     if vm.users.is_empty() && !editing_this_vm {
         ui.label(RichText::new("Aucun utilisateur enregistré.").color(p().text_muted));
@@ -205,7 +205,7 @@ fn users(ui: &mut Ui, vm: &Vm, st: &mut UiState, action: &mut Option<Action>) {
             .as_ref()
             .is_some_and(|f| f.vm_id == vm.id && f.user_id.as_deref() == Some(u.id.as_str()));
         if editing {
-            user_form(ui, st);
+            user_form(ui, store, st);
             continue;
         }
         inset_frame().show(ui, |ui| {
@@ -226,6 +226,9 @@ fn users(ui: &mut Ui, vm: &Vm, st: &mut UiState, action: &mut Option<Action>) {
                 if u.username == vm.ssh.default_user {
                     chip(ui, "SSH par défaut", p().accent_fg);
                 }
+                if u.password.is_some() {
+                    chip(ui, "🔑 mot de passe", p().success);
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if icon_button(ui, "🗑", "Supprimer").clicked() {
                         *action = Some(Action::DeleteUser(u.id.clone(), u.username.clone()));
@@ -235,6 +238,9 @@ fn users(ui: &mut Ui, vm: &Vm, st: &mut UiState, action: &mut Option<Action>) {
                     }
                 });
             });
+            if u.password.is_some() {
+                password_row(ui, store, &vm.id, u, st);
+            }
             let details: Vec<&str> = [u.full_name.as_str(), u.notes.as_str()]
                 .into_iter()
                 .filter(|s| !s.is_empty())
@@ -254,7 +260,7 @@ fn users(ui: &mut Ui, vm: &Vm, st: &mut UiState, action: &mut Option<Action>) {
         .as_ref()
         .is_some_and(|f| f.vm_id == vm.id && f.user_id.is_none());
     if adding {
-        user_form(ui, st);
+        user_form(ui, store, st);
     } else {
         let enabled = st.user_form.is_none();
         let add = ui.add_enabled(
@@ -269,7 +275,66 @@ fn users(ui: &mut Ui, vm: &Vm, st: &mut UiState, action: &mut Option<Action>) {
     }
 }
 
-fn user_form(ui: &mut Ui, st: &mut UiState) {
+/// Mot de passe enregistré : masqué, affichable et copiable si le coffre est déverrouillé
+fn password_row(ui: &mut Ui, store: &Store, vm_id: &str, u: &VmUser, st: &mut UiState) {
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new("Mot de passe")
+                .small()
+                .color(p().text_secondary),
+        );
+        // Copie de la clé : `st` reste modifiable pendant l'affichage
+        let Some(key) = st.vault_key.clone() else {
+            let unlock = egui::Button::new(
+                RichText::new("🔒  déverrouiller le coffre")
+                    .small()
+                    .color(p().text_secondary),
+            )
+            .frame(false);
+            if ui
+                .add(unlock)
+                .on_hover_text(
+                    "Saisir le mot de passe maître pour afficher ou copier ce mot de passe",
+                )
+                .clicked()
+            {
+                st.ask_unlock(store.vault().is_some(), None);
+            }
+            return;
+        };
+        match store.user_password(&key, vm_id, &u.id) {
+            Ok(Some(password)) => {
+                let revealed = st.revealed.contains(&u.id);
+                let shown = if revealed { password.as_str() } else { MASK };
+                ui.label(RichText::new(shown).monospace().color(p().text_strong));
+                let tooltip = if revealed {
+                    "Masquer"
+                } else {
+                    "Afficher en clair"
+                };
+                if icon_button(ui, "👁", tooltip).clicked() {
+                    if revealed {
+                        st.revealed.remove(&u.id);
+                    } else {
+                        st.revealed.insert(u.id.clone());
+                    }
+                }
+                if icon_button(ui, "🗐", "Copier le mot de passe").clicked() {
+                    ui.ctx().copy_text(password.to_string());
+                    st.success("Mot de passe copié");
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                ui.label(RichText::new(format!("⚠ {e}")).small().color(p().error));
+            }
+        }
+    });
+}
+
+fn user_form(ui: &mut Ui, store: &Store, st: &mut UiState) {
+    let vault_open = st.vault_form.is_some();
+    let unlocked = st.is_unlocked();
     let Some(form) = &mut st.user_form else {
         return;
     };
@@ -291,6 +356,49 @@ fn user_form(ui: &mut Ui, st: &mut UiState) {
                     text_field(ui, &mut form.role, "admin, service…", false);
                 });
             });
+            let hint = if form.has_password {
+                "laisser vide pour conserver l'actuel"
+            } else {
+                "facultatif, chiffré dans le coffre"
+            };
+            labeled(ui, "Mot de passe", Some(hint), |ui| {
+                ui.add_enabled_ui(!form.remove_password, |ui| {
+                    ui.horizontal(|ui| {
+                        let placeholder = if form.has_password { "inchangé" } else { "" };
+                        password_field(
+                            ui,
+                            &mut form.password,
+                            &mut form.show_password,
+                            placeholder,
+                            104.0,
+                        );
+                        if ghost_button(ui, "🎲  Générer")
+                            .on_hover_text("Mot de passe aléatoire de 20 caractères")
+                            .clicked()
+                        {
+                            match generate_password() {
+                                Ok(password) => {
+                                    form.password = password;
+                                    form.show_password = true;
+                                }
+                                Err(e) => form.error = Some(e),
+                            }
+                        }
+                    });
+                });
+            });
+            let pending = !form.password.is_empty() || form.remove_password;
+            if pending && !unlocked {
+                ui.label(
+                    RichText::new(if store.vault().is_some() {
+                        "🔒 Le mot de passe maître sera demandé à l'enregistrement."
+                    } else {
+                        "🔒 Un coffre (mot de passe maître) sera créé à l'enregistrement."
+                    })
+                    .small()
+                    .color(p().text_secondary),
+                );
+            }
             labeled(ui, "Notes", None, |ui| {
                 text_field(
                     ui,
@@ -301,12 +409,16 @@ fn user_form(ui: &mut Ui, st: &mut UiState) {
             });
             ui.horizontal(|ui| {
                 ui.checkbox(&mut form.sudo, "Droits administrateur (sudo)");
+                if form.has_password {
+                    ui.checkbox(&mut form.remove_password, "Supprimer le mot de passe");
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     submit = primary_button(ui, "Enregistrer").clicked();
                     cancel = ghost_button(ui, "Annuler").clicked();
                 });
             });
-            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            // Entrée dans la fenêtre du coffre ne doit pas revalider ce formulaire
+            if !vault_open && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 submit = true;
             }
             error_text(ui, &form.error);
