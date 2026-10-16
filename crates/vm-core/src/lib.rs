@@ -8,7 +8,9 @@ pub mod models;
 pub mod query;
 pub mod store;
 pub mod validation;
+pub mod vault;
 
 pub use error::{CoreError, CoreResult};
 pub use models::*;
-pub use store::Store;
+pub use store::{ImportReport, Store};
+pub use vault::{EncryptedBlob, EncryptedFile, KdfParams, VaultHeader, VaultKey};

@@ -12,6 +12,17 @@ pub enum CoreError {
     #[error("{0}")]
     Conflict(String),
 
+    /// Le fichier de données est chiffré : il faut le mot de passe maître pour l'ouvrir
+    #[error("Inventaire chiffré : mot de passe maître requis")]
+    Locked,
+
+    #[error("Mot de passe maître incorrect")]
+    WrongPassword,
+
+    /// Donnée chiffrée illisible (altérée, tronquée ou mal encodée)
+    #[error("Erreur de chiffrement : {0}")]
+    Crypto(String),
+
     #[error("Erreur d'accès au fichier : {0}")]
     Io(#[from] std::io::Error),
 

@@ -3,6 +3,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::vault::{EncryptedBlob, VaultHeader};
+
 /// Version du format du fichier `data.json`, incrémentée à chaque changement incompatible
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -30,6 +32,9 @@ pub struct AppData {
     pub groups: Vec<Group>,
     #[serde(default)]
     pub vms: Vec<Vm>,
+    /// Coffre des mots de passe (absent tant qu'aucun mot de passe maître n'a été défini)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vault: Option<VaultHeader>,
 }
 
 impl Default for AppData {
@@ -38,6 +43,7 @@ impl Default for AppData {
             version: SCHEMA_VERSION,
             groups: Vec::new(),
             vms: Vec::new(),
+            vault: None,
         }
     }
 }
@@ -169,8 +175,12 @@ pub struct VmUser {
     pub sudo: bool,
     #[serde(default)]
     pub notes: String,
+    /// Mot de passe du compte, chiffré par le coffre — jamais en clair
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<EncryptedBlob>,
 }
 
+/// Saisie d'un utilisateur ; le mot de passe se gère à part, via le coffre
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct VmUserInput {
     pub username: String,
@@ -193,9 +203,11 @@ impl VmUser {
             role: input.role,
             sudo: input.sudo,
             notes: input.notes,
+            password: None,
         }
     }
 
+    /// Met à jour les champs saisis ; le mot de passe chiffré est conservé
     pub fn apply(&mut self, input: VmUserInput) {
         self.username = input.username;
         self.full_name = input.full_name;

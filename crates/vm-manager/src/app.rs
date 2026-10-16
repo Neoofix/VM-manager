@@ -300,12 +300,20 @@ fn run_command(store: &mut Store, st: &mut UiState, command: Command) {
             else {
                 return;
             };
-            match store.import_from(&path, replace) {
-                Ok((groups, vms)) => {
+            match store.import_from(&path, replace, None) {
+                Ok(report) => {
                     st.open_vm = None;
-                    st.success(format!(
-                        "Import terminé : {groups} groupe(s) et {vms} VM ajouté(s)"
-                    ));
+                    let mut message = format!(
+                        "Import terminé : {} groupe(s) et {} VM ajouté(s)",
+                        report.groups, report.vms
+                    );
+                    if report.passwords_dropped > 0 {
+                        message.push_str(&format!(
+                            " — {} mot(s) de passe écarté(s) (coffre différent)",
+                            report.passwords_dropped
+                        ));
+                    }
+                    st.success(message);
                 }
                 Err(e) => st.error(e.to_string()),
             }
