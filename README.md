@@ -17,7 +17,18 @@ Mémo / inventaire de machines virtuelles pour homelab et petites infras : group
 - **Tableau de bord** : compteurs, répartition par groupe, VM modifiées récemment
 - **Duplication** d'une VM, **export / import JSON** (fusion ou remplacement)
 
-## Installation
+## Télécharger un exécutable (sans rien installer)
+
+1. Sur GitHub, onglet **Actions** → workflow **Build** → bouton **Run workflow** (choisis les plateformes : Windows, Linux, macOS).
+2. Attends la fin du run (~5 à 10 min), puis ouvre-le : les exécutables sont en bas de page, section **Artifacts**.
+   - **Windows** : `vm-manager-windows-<commit>.zip` → décompresse et lance `vm-manager.exe`.
+     L'exécutable n'est pas signé : si SmartScreen s'affiche, *Informations complémentaires* → *Exécuter quand même*.
+   - **Linux** : archive `.tar.gz` à l'intérieur du zip → `tar xzf …` puis `./vm-manager`.
+   - **macOS** : idem ; au premier lancement, clic droit → *Ouvrir* (binaire non signé).
+
+Les artefacts sont conservés 14 jours. Le fichier `vm-manager.json` est créé à côté de l'exécutable.
+
+## Installation depuis les sources
 
 ### Prérequis
 

@@ -1,0 +1,90 @@
+# Compilation manuelle : onglet « Actions » → « Build » → « Run workflow ».
+# Les exécutables sont à télécharger en bas de la page du run (section « Artifacts »).
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      windows:
+        description: "Windows x64 (.exe)"
+        type: boolean
+        default: true
+      linux:
+        description: "Linux x64"
+        type: boolean
+        default: true
+      macos:
+        description: "macOS Apple Silicon"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            key: windows
+            os: windows-latest
+            exe: vm-manager.exe
+          - name: Linux x64
+            key: linux
+            os: ubuntu-latest
+            exe: vm-manager
+          - name: macOS Apple Silicon
+            key: macos
+            os: macos-latest
+            exe: vm-manager
+    steps:
+      - name: Plateforme demandée ?
+        id: wanted
+        shell: bash
+        run: echo "yes=${{ inputs[matrix.key] }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.wanted.outputs.yes == 'true'
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.wanted.outputs.yes == 'true'
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.wanted.outputs.yes == 'true'
+        with:
+          key: build-${{ matrix.key }}
+
+      - name: Compilation (release)
+        if: steps.wanted.outputs.yes == 'true'
+        run: cargo build --release --locked -p vm-manager
+
+      - name: Préparation du paquet
+        if: steps.wanted.outputs.yes == 'true'
+        id: pkg
+        shell: bash
+        run: |
+          short=$(git rev-parse --short HEAD)
+          name="vm-manager-${{ matrix.key }}-${short}"
+          mkdir -p "dist/$name"
+          cp "target/release/${{ matrix.exe }}" README.md LICENSE "dist/$name/"
+          if [ "${{ matrix.key }}" = "windows" ]; then
+            # Dossier envoyé tel quel : GitHub le livre déjà sous forme de .zip
+            echo "path=dist/$name" >> "$GITHUB_OUTPUT"
+          else
+            # Archive tar pour conserver le droit d'exécution du binaire
+            tar -czf "dist/$name.tar.gz" -C dist "$name"
+            echo "path=dist/$name.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.wanted.outputs.yes == 'true'
+        with:
+          name: ${{ steps.pkg.outputs.name }}
+          path: ${{ steps.pkg.outputs.path }}
+          retention-days: 14
+          if-no-files-found: error
