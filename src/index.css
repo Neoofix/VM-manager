@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* === Thème One Half Dark (même palette que Server Power Manager) === */
+:root {
+  --bg-primary:       #282c34;
+  --bg-secondary:     #21252b;
+  --bg-tertiary:      #2c313a;
+  --bg-input:         #1e2227;
+  --bg-hover:         #323842;
+  --text-primary:     #abb2bf;
+  --text-secondary:   #7f848e;
+  --text-muted:       #5c6370;
+  --accent-primary:   #61afef;
+  --accent-secondary: #56b6c2;
+  --accent-success:   #98c379;
+  --accent-warning:   #e5c07b;
+  --accent-error:     #e06c75;
+  --border-primary:   #3e4451;
+}
+
+@layer base {
+  body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 14px;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  input, textarea, select, .selectable {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  ::-webkit-scrollbar       { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg-secondary); }
+  ::-webkit-scrollbar-thumb { background: var(--border-primary); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--accent-primary); }
+}
+
+@layer components {
+  .input {
+    @apply w-full px-3 py-2 text-sm rounded-win bg-bg-input border border-border-primary text-text-primary
+      placeholder:text-text-muted focus:outline-none focus:border-accent-primary transition-colors;
+  }
+  .label { @apply block text-xs font-medium text-text-secondary mb-1; }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm rounded-win font-medium transition-all
+      disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary { @apply btn bg-accent-primary hover:bg-accent-secondary text-white; }
+  .btn-ghost { @apply btn bg-bg-secondary border border-border-primary text-text-primary hover:bg-bg-hover; }
+  .btn-danger { @apply btn bg-accent-error/90 hover:bg-accent-error text-white; }
+  .icon-btn {
+    @apply p-1.5 rounded-win text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors;
+  }
+  .card { @apply bg-bg-tertiary border border-border-primary rounded-win shadow-win; }
+  .chip { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border; }
+}
