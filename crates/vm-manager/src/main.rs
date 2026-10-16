@@ -4,6 +4,7 @@
 mod app;
 mod forms;
 mod paths;
+mod prefs;
 mod theme;
 mod ui;
 
@@ -30,8 +31,16 @@ fn main() -> eframe::Result {
             ..Default::default()
         },
         Box::new(move |cc| {
-            theme::apply(&cc.egui_ctx);
-            Ok(Box::new(app::VmManagerApp::new(store, data_path, source)))
+            let prefs_path = prefs::path_for(&data_path);
+            let prefs = prefs::load(&prefs_path);
+            theme::select(&cc.egui_ctx, theme::index_of(&prefs.theme));
+            Ok(Box::new(app::VmManagerApp::new(
+                store,
+                data_path,
+                source,
+                prefs_path,
+                cc.egui_ctx.clone(),
+            )))
         }),
     )
 }

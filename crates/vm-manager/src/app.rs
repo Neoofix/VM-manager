@@ -10,6 +10,8 @@ use vm_core::Store;
 
 use crate::forms::{tab_for_error, GroupForm, UserForm, VmForm};
 use crate::paths::DataSource;
+use crate::prefs::{self, Prefs};
+use crate::theme;
 use crate::ui;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -39,9 +41,16 @@ pub enum Command {
     SaveGroup,
     DeleteGroup(String),
     SaveUser,
-    DeleteUser { vm_id: String, user_id: String },
+    DeleteUser {
+        vm_id: String,
+        user_id: String,
+    },
     Export,
-    Import { replace: bool },
+    Import {
+        replace: bool,
+    },
+    /// Change de thème (index dans `theme::THEMES`) et l'enregistre
+    SetTheme(usize),
 }
 
 /// Demande de confirmation avant une commande destructive
@@ -113,15 +122,25 @@ pub struct VmManagerApp {
     pub store: Result<Store, String>,
     pub data_path: PathBuf,
     pub data_source: DataSource,
+    pub prefs_path: PathBuf,
+    pub ctx: egui::Context,
     pub state: UiState,
 }
 
 impl VmManagerApp {
-    pub fn new(store: Result<Store, String>, data_path: PathBuf, data_source: DataSource) -> Self {
+    pub fn new(
+        store: Result<Store, String>,
+        data_path: PathBuf,
+        data_source: DataSource,
+        prefs_path: PathBuf,
+        ctx: egui::Context,
+    ) -> Self {
         VmManagerApp {
             store,
             data_path,
             data_source,
+            prefs_path,
+            ctx,
             state: UiState::default(),
         }
     }
@@ -131,7 +150,18 @@ impl VmManagerApp {
         let Ok(store) = &mut self.store else { return };
         let st = &mut self.state;
         for command in std::mem::take(&mut st.commands) {
-            run_command(store, st, command);
+            match command {
+                Command::SetTheme(index) => {
+                    theme::select(&self.ctx, index);
+                    let prefs = Prefs {
+                        theme: theme::current().id.to_string(),
+                    };
+                    if let Err(e) = prefs::save(&self.prefs_path, &prefs) {
+                        st.error(format!("Thème appliqué mais non enregistré : {e}"));
+                    }
+                }
+                command => run_command(store, st, command),
+            }
         }
     }
 }
@@ -280,6 +310,7 @@ fn run_command(store: &mut Store, st: &mut UiState, command: Command) {
                 Err(e) => st.error(e.to_string()),
             }
         }
+        Command::SetTheme(_) => {}
     }
 }
 

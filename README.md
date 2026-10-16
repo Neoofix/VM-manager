@@ -4,7 +4,7 @@ Mémo / inventaire de machines virtuelles pour homelab et petites infras : group
 
 > **Purement informatif** : l'application ne démarre, n'arrête ni ne contacte aucune VM ni aucun hyperviseur. Elle sert de fiche mémo centralisée.
 
-**100 % Rust** : interface native [egui / eframe](https://github.com/emilk/egui), un seul exécutable, ni Node.js ni navigateur embarqué. Style inspiré de [Server Power Manager](https://github.com/NolanEDUVAUD/server-manager) (barre latérale, cartes, thème One Half Dark).
+**100 % Rust** : interface native [egui / eframe](https://github.com/emilk/egui), un seul exécutable, ni Node.js ni navigateur embarqué. Style inspiré de [Server Power Manager](https://github.com/NolanEDUVAUD/server-manager) (barre latérale, cartes, mêmes thèmes de couleurs).
 
 ## Fonctionnalités
 
@@ -16,17 +16,20 @@ Mémo / inventaire de machines virtuelles pour homelab et petites infras : group
 - **Recherche** multi-mots (nom, IP, VLAN, étiquette, utilisateur…, insensible à la casse et aux accents) et filtre par groupe
 - **Tableau de bord** : compteurs, répartition par groupe, VM modifiées récemment
 - **Duplication** d'une VM, **export / import JSON** (fusion ou remplacement)
+- **Thèmes** changeables à chaud dans Paramètres → Apparence : One Half Dark, Fluent Dark, Gruvbox Dark, Nord, Dracula, Catppuccin Mocha, Tokyo Night (choix mémorisé dans `vm-manager.prefs.json`, à côté de l'inventaire)
 
 ## Télécharger un exécutable (sans rien installer)
 
-1. Sur GitHub, onglet **Actions** → workflow **Build** → bouton **Run workflow** (choisis les plateformes : Windows, Linux, macOS).
-2. Attends la fin du run (~5 à 10 min), puis ouvre-le : les exécutables sont en bas de page, section **Artifacts**.
+1. Sur GitHub, onglet **Actions** → workflow **Build** → bouton **Run workflow** (choix des plateformes : Windows, Linux, macOS).
+2. Après ~5 à 10 min, onglet **Releases** : une release **brouillon (Draft)** `v0.1.0-build.N` contient les exécutables.
+   Les brouillons ne sont visibles que par les mainteneurs du dépôt ; clique *Edit* → *Publish release* pour la rendre publique.
+   Les mêmes fichiers sont aussi en bas de la page du run (section **Artifacts**, conservés 14 jours).
    - **Windows** : `vm-manager-windows-<commit>.zip` → décompresse et lance `vm-manager.exe`.
      L'exécutable n'est pas signé : si SmartScreen s'affiche, *Informations complémentaires* → *Exécuter quand même*.
-   - **Linux** : archive `.tar.gz` à l'intérieur du zip → `tar xzf …` puis `./vm-manager`.
+   - **Linux** : `tar xzf vm-manager-linux-<commit>.tar.gz` puis `./vm-manager`.
    - **macOS** : idem ; au premier lancement, clic droit → *Ouvrir* (binaire non signé).
 
-Les artefacts sont conservés 14 jours. Le fichier `vm-manager.json` est créé à côté de l'exécutable.
+Le fichier `vm-manager.json` est créé à côté de l'exécutable.
 
 ## Installation depuis les sources
 
@@ -96,7 +99,8 @@ VM-manager/                     workspace Cargo
         ├── paths.rs            choix du fichier de données (mode portable)
         ├── app.rs              état de l'interface et application des commandes
         ├── forms.rs            états des formulaires (saisie → modèles du cœur)
-        ├── theme.rs            palette One Half Dark
+        ├── theme.rs            7 thèmes, palette active changeable à chaud
+        ├── prefs.rs            préférences (thème) à côté du fichier de données
         └── ui/                 écrans : dashboard, vms, vm_detail, vm_form, groups, settings, widgets
 ```
 

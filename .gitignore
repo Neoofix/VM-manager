@@ -3,3 +3,5 @@
 vm-manager.json
 *.log
 .DS_Store
+vm-manager.prefs.json
+*.prefs.json

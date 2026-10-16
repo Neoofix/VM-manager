@@ -31,11 +31,11 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
                     egui::Frame::new()
-                        .fill(ACCENT.linear_multiply(0.12))
+                        .fill(p().accent.linear_multiply(0.12))
                         .corner_radius(CornerRadius::same(RADIUS))
                         .inner_margin(egui::Margin::same(8))
                         .show(ui, |ui| {
-                            ui.label(RichText::new(icon).size(20.0).color(ACCENT))
+                            ui.label(RichText::new(icon).size(20.0).color(p().accent_fg))
                         });
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
@@ -43,9 +43,9 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
                             RichText::new(value.to_string())
                                 .size(24.0)
                                 .strong()
-                                .color(TEXT_STRONG),
+                                .color(p().text_strong),
                         );
-                        ui.label(RichText::new(label).small().color(TEXT_SECONDARY));
+                        ui.label(RichText::new(label).small().color(p().text_secondary));
                     });
                 });
             });
@@ -64,11 +64,11 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
             ui.label(
                 RichText::new("Répartition par groupe")
                     .strong()
-                    .color(TEXT_STRONG),
+                    .color(p().text_strong),
             );
             ui.add_space(6.0);
             if vms.is_empty() {
-                ui.label(RichText::new("Aucune VM enregistrée.").color(TEXT_MUTED));
+                ui.label(RichText::new("Aucune VM enregistrée.").color(p().text_muted));
                 return;
             }
             let mut rows: Vec<(String, egui::Color32, usize, GroupFilter)> = store
@@ -92,7 +92,7 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
             if ungrouped > 0 {
                 rows.push((
                     "Non classées".into(),
-                    TEXT_MUTED,
+                    p().text_muted,
                     ungrouped,
                     GroupFilter::Ungrouped,
                 ));
@@ -103,12 +103,12 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
                     .scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| {
                         ui.horizontal(|ui| {
                             color_dot(ui, color);
-                            ui.label(RichText::new(&name).color(TEXT_STRONG));
+                            ui.label(RichText::new(&name).color(p().text_strong));
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
                                     ui.label(
-                                        RichText::new(count.to_string()).color(TEXT_SECONDARY),
+                                        RichText::new(count.to_string()).color(p().text_secondary),
                                     );
                                 },
                             );
@@ -117,7 +117,7 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
                             egui::vec2(ui.available_width(), 6.0),
                             Sense::hover(),
                         );
-                        ui.painter().rect_filled(rect, 3.0, BG_SECONDARY);
+                        ui.painter().rect_filled(rect, 3.0, p().bg_secondary);
                         let mut bar = rect;
                         bar.set_width(rect.width() * count as f32 / max as f32);
                         ui.painter().rect_filled(bar, 3.0, color);
@@ -137,19 +137,19 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
             ui.label(
                 RichText::new("Modifiées récemment")
                     .strong()
-                    .color(TEXT_STRONG),
+                    .color(p().text_strong),
             );
             ui.add_space(6.0);
             let mut recent: Vec<_> = vms.iter().collect();
             recent.sort_by_key(|v| std::cmp::Reverse(v.updated_at));
             if recent.is_empty() {
-                ui.label(RichText::new("Rien pour l'instant.").color(TEXT_MUTED));
+                ui.label(RichText::new("Rien pour l'instant.").color(p().text_muted));
             }
             for vm in recent.into_iter().take(6) {
                 let r = ui
                     .scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(&vm.name).strong().color(TEXT_STRONG));
+                            ui.label(RichText::new(&vm.name).strong().color(p().text_strong));
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
@@ -157,14 +157,16 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
                                     ui.label(
                                         RichText::new(when.format("%d/%m/%Y %H:%M").to_string())
                                             .small()
-                                            .color(TEXT_MUTED),
+                                            .color(p().text_muted),
                                     );
                                     let ip = if vm.network.ip.is_empty() {
                                         "—"
                                     } else {
                                         &vm.network.ip
                                     };
-                                    ui.label(RichText::new(ip).monospace().color(TEXT_SECONDARY));
+                                    ui.label(
+                                        RichText::new(ip).monospace().color(p().text_secondary),
+                                    );
                                 },
                             );
                         });

@@ -40,10 +40,10 @@ pub fn show(ui: &Ui, store: &Store, st: &mut UiState) {
                     let text = RichText::new(label).color(if active {
                         Color32::WHITE
                     } else {
-                        TEXT_SECONDARY
+                        p().text_secondary
                     });
                     let button = egui::Button::new(text)
-                        .fill(if active { ACCENT } else { BG_SECONDARY })
+                        .fill(if active { p().accent } else { p().bg_secondary })
                         .stroke(egui::Stroke::NONE);
                     if ui.add(button).clicked() {
                         form.tab = tab;
@@ -192,7 +192,7 @@ pub fn show(ui: &Ui, store: &Store, st: &mut UiState) {
                     ui.label(
                         RichText::new("Indique où trouver la clé ou le mot de passe, jamais le secret lui-même.")
                             .small()
-                            .color(WARNING),
+                            .color(p().warning),
                     );
                     labeled(ui, "Notes SSH", None, |ui| {
                         text_area(

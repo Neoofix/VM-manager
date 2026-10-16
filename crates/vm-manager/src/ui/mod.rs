@@ -29,7 +29,7 @@ pub fn show(ui: &mut Ui, store: &Store, data_path: &Path, source: DataSource, st
 
     egui::CentralPanel::no_frame().show(ui, |ui| {
         Frame::new()
-            .fill(BG_PRIMARY)
+            .fill(p().bg_primary)
             .inner_margin(Margin::same(24))
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
@@ -63,27 +63,27 @@ fn sidebar(ui: &mut Ui, store: &Store, st: &mut UiState) {
         .show_separator_line(false)
         .frame(
             Frame::new()
-                .fill(BG_SECONDARY)
-                .stroke(Stroke::new(1.0, BORDER))
+                .fill(p().bg_secondary)
+                .stroke(Stroke::new(1.0, p().border))
                 .inner_margin(Margin::same(12)),
         )
         .show(ui, |ui| {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 Frame::new()
-                    .fill(ACCENT.linear_multiply(0.15))
+                    .fill(p().accent.linear_multiply(0.15))
                     .corner_radius(CornerRadius::same(RADIUS))
                     .inner_margin(Margin::same(6))
                     .show(ui, |ui| {
-                        ui.label(RichText::new("🖧").size(18.0).color(ACCENT))
+                        ui.label(RichText::new("🖧").size(18.0).color(p().accent_fg))
                     });
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
-                    ui.label(RichText::new("VM Manager").strong().color(TEXT_STRONG));
+                    ui.label(RichText::new("VM Manager").strong().color(p().text_strong));
                     ui.label(
                         RichText::new("Inventaire & mémo")
                             .small()
-                            .color(TEXT_SECONDARY),
+                            .color(p().text_secondary),
                     );
                 });
             });
@@ -96,10 +96,14 @@ fn sidebar(ui: &mut Ui, store: &Store, st: &mut UiState) {
                 let text = RichText::new(format!("{icon}   {label}")).color(if active {
                     Color32::WHITE
                 } else {
-                    TEXT_SECONDARY
+                    p().text_secondary
                 });
                 let button = Button::new(text)
-                    .fill(if active { ACCENT } else { Color32::TRANSPARENT })
+                    .fill(if active {
+                        p().accent
+                    } else {
+                        Color32::TRANSPARENT
+                    })
                     .stroke(Stroke::NONE)
                     .min_size(egui::vec2(ui.available_width(), 34.0));
                 if ui.add(button).clicked() {
@@ -119,7 +123,7 @@ fn sidebar(ui: &mut Ui, store: &Store, st: &mut UiState) {
                         if groups > 1 { "s" } else { "" }
                     ))
                     .small()
-                    .color(TEXT_SECONDARY),
+                    .color(p().text_secondary),
                 );
                 ui.separator();
             });
@@ -137,8 +141,8 @@ fn confirm_dialog(ui: &Ui, st: &mut UiState) {
         440.0,
         |ui| {
             ui.horizontal_top(|ui| {
-                ui.label(RichText::new("⚠").size(22.0).color(ERROR));
-                ui.label(RichText::new(&confirm.message).color(TEXT_PRIMARY));
+                ui.label(RichText::new("⚠").size(22.0).color(p().error));
+                ui.label(RichText::new(&confirm.message).color(p().text));
             });
         },
         |ui| {
@@ -184,9 +188,9 @@ fn toasts(ui: &Ui, st: &mut UiState) {
             ui.set_max_width(340.0);
             let mut dismissed = None;
             for (i, t) in st.toasts.iter().enumerate() {
-                let color = if t.success { SUCCESS } else { ERROR };
+                let color = if t.success { p().success } else { p().error };
                 Frame::new()
-                    .fill(BG_TERTIARY)
+                    .fill(p().bg_tertiary)
                     .stroke(Stroke::new(1.0, color.linear_multiply(0.6)))
                     .corner_radius(CornerRadius::same(RADIUS))
                     .inner_margin(Margin::same(12))
@@ -195,7 +199,7 @@ fn toasts(ui: &Ui, st: &mut UiState) {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new(if t.success { "✔" } else { "✖" }).color(color));
                             ui.add(
-                                egui::Label::new(RichText::new(&t.message).color(TEXT_STRONG))
+                                egui::Label::new(RichText::new(&t.message).color(p().text_strong))
                                     .wrap(),
                             );
                             if widgets::icon_button(ui, "✖", "Fermer").clicked() {
@@ -215,25 +219,25 @@ pub fn load_error(ui: &mut Ui, error: &str, data_path: &Path) {
     egui::CentralPanel::default().show(ui, |ui| {
         ui.vertical_centered(|ui| {
             ui.add_space(120.0);
-            ui.label(RichText::new("⚠").size(40.0).color(ERROR));
+            ui.label(RichText::new("⚠").size(40.0).color(p().error));
             ui.label(
                 RichText::new("Impossible de charger l'inventaire")
                     .heading()
-                    .color(TEXT_STRONG),
+                    .color(p().text_strong),
             );
             ui.add_space(8.0);
-            ui.label(RichText::new(error).color(TEXT_PRIMARY));
+            ui.label(RichText::new(error).color(p().text));
             ui.label(
                 RichText::new(data_path.display().to_string())
                     .monospace()
-                    .color(TEXT_SECONDARY),
+                    .color(p().text_secondary),
             );
             ui.add_space(8.0);
             ui.label(
                 RichText::new(
                     "Lance l'application avec --data <fichier> pour utiliser un autre inventaire.",
                 )
-                .color(TEXT_SECONDARY),
+                .color(p().text_secondary),
             );
         });
     });

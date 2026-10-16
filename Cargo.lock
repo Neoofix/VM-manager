@@ -3204,6 +3204,8 @@ dependencies = [
  "env_logger",
  "log",
  "rfd",
+ "serde",
+ "serde_json",
  "tempfile",
  "vm-core",
 ]

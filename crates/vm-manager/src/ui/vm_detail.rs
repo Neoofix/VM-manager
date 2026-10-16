@@ -45,18 +45,18 @@ pub fn show(ui: &Ui, store: &Store, st: &mut UiState) {
             ui.horizontal_wrapped(|ui| {
                 match group {
                     Some(g) => chip(ui, format!("• {}", g.name), parse_hex(g.color.as_deref())),
-                    None => chip(ui, "Non classée", TEXT_MUTED),
+                    None => chip(ui, "Non classée", p().text_muted),
                 }
                 if !vm.os.is_empty() {
-                    chip(ui, &vm.os, TEXT_SECONDARY);
+                    chip(ui, &vm.os, p().text_secondary);
                 }
                 for tag in &vm.tags {
-                    chip(ui, tag, ACCENT_2);
+                    chip(ui, tag, p().accent_2);
                 }
             });
             if !vm.description.is_empty() {
                 ui.add_space(4.0);
-                ui.label(RichText::new(&vm.description).color(TEXT_STRONG));
+                ui.label(RichText::new(&vm.description).color(p().text_strong));
             }
             ui.add_space(10.0);
 
@@ -97,7 +97,7 @@ pub fn show(ui: &Ui, store: &Store, st: &mut UiState) {
                     ],
                 );
                 if !vm.ssh.notes.is_empty() {
-                    ui.label(RichText::new(&vm.ssh.notes).color(TEXT_PRIMARY));
+                    ui.label(RichText::new(&vm.ssh.notes).color(p().text));
                 }
             });
             ui.add_space(10.0);
@@ -108,9 +108,9 @@ pub fn show(ui: &Ui, store: &Store, st: &mut UiState) {
             if !vm.notes.is_empty() {
                 ui.add_space(10.0);
                 section_title(ui, "Notes");
-                inset_frame().fill(BG_INPUT).show(ui, |ui| {
+                inset_frame().fill(p().bg_input).show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.label(RichText::new(&vm.notes).monospace().color(TEXT_PRIMARY));
+                    ui.label(RichText::new(&vm.notes).monospace().color(p().text));
                 });
             }
         },
@@ -191,7 +191,7 @@ fn grid(ui: &mut Ui, id: &str, rows: &[(&str, &str, bool)]) {
 fn users(ui: &mut Ui, vm: &Vm, st: &mut UiState, action: &mut Option<Action>) {
     let editing_this_vm = st.user_form.as_ref().is_some_and(|f| f.vm_id == vm.id);
     if vm.users.is_empty() && !editing_this_vm {
-        ui.label(RichText::new("Aucun utilisateur enregistré.").color(TEXT_MUTED));
+        ui.label(RichText::new("Aucun utilisateur enregistré.").color(p().text_muted));
     }
 
     for u in &vm.users {
@@ -206,16 +206,20 @@ fn users(ui: &mut Ui, vm: &Vm, st: &mut UiState, action: &mut Option<Action>) {
         inset_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.label(RichText::new(&u.username).monospace().color(TEXT_STRONG));
+                ui.label(
+                    RichText::new(&u.username)
+                        .monospace()
+                        .color(p().text_strong),
+                );
                 copy_button(ui, &u.username);
                 if u.sudo {
-                    chip(ui, "sudo", WARNING);
+                    chip(ui, "sudo", p().warning);
                 }
                 if !u.role.is_empty() {
-                    chip(ui, &u.role, TEXT_SECONDARY);
+                    chip(ui, &u.role, p().text_secondary);
                 }
                 if u.username == vm.ssh.default_user {
-                    chip(ui, "SSH par défaut", ACCENT);
+                    chip(ui, "SSH par défaut", p().accent_fg);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if icon_button(ui, "🗑", "Supprimer").clicked() {
@@ -234,7 +238,7 @@ fn users(ui: &mut Ui, vm: &Vm, st: &mut UiState, action: &mut Option<Action>) {
                 ui.label(
                     RichText::new(details.join(" — "))
                         .small()
-                        .color(TEXT_SECONDARY),
+                        .color(p().text_secondary),
                 );
             }
         });
@@ -251,7 +255,7 @@ fn users(ui: &mut Ui, vm: &Vm, st: &mut UiState, action: &mut Option<Action>) {
         let add = ui.add_enabled(
             enabled,
             egui::Button::new("➕  Ajouter un utilisateur")
-                .fill(BG_SECONDARY)
+                .fill(p().bg_secondary)
                 .min_size(egui::vec2(ui.available_width(), 32.0)),
         );
         if add.clicked() {
@@ -267,7 +271,7 @@ fn user_form(ui: &mut Ui, st: &mut UiState) {
     let mut submit = false;
     let mut cancel = false;
     inset_frame()
-        .stroke(egui::Stroke::new(1.0, ACCENT.linear_multiply(0.6)))
+        .stroke(egui::Stroke::new(1.0, p().accent.linear_multiply(0.6)))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.columns(3, |c| {

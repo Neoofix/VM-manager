@@ -95,7 +95,9 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
     if filtered.is_empty() {
         ui.vertical_centered(|ui| {
             ui.add_space(40.0);
-            ui.label(RichText::new("Aucune VM ne correspond à ces filtres.").color(TEXT_SECONDARY));
+            ui.label(
+                RichText::new("Aucune VM ne correspond à ces filtres.").color(p().text_secondary),
+            );
         });
         return;
     }
@@ -125,8 +127,8 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
         ui.horizontal(|ui| {
             color_dot(ui, parse_hex(group.and_then(|g| g.color.as_deref())));
             let name = group.map(|g| g.name.as_str()).unwrap_or("Non classées");
-            ui.label(RichText::new(name).strong().color(TEXT_SECONDARY));
-            ui.label(RichText::new(format!("({})", items.len())).color(TEXT_MUTED));
+            ui.label(RichText::new(name).strong().color(p().text_secondary));
+            ui.label(RichText::new(format!("({})", items.len())).color(p().text_muted));
         });
         // Cartes alignées en haut, renvoyées à la ligne quand la place manque
         ui.with_layout(
@@ -159,12 +161,12 @@ fn vm_card(ui: &mut Ui, vm: &Vm, group: Option<&Group>, st: &mut UiState) {
                     ui.set_max_width(CARD_WIDTH - 34.0);
                     ui.set_min_height(118.0);
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("🖥").size(18.0).color(ACCENT));
+                        ui.label(RichText::new("🖥").size(18.0).color(p().accent_fg));
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 0.0;
                             ui.add(
                                 egui::Label::new(
-                                    RichText::new(&vm.name).strong().color(TEXT_STRONG),
+                                    RichText::new(&vm.name).strong().color(p().text_strong),
                                 )
                                 .truncate(),
                             );
@@ -174,8 +176,10 @@ fn vm_card(ui: &mut Ui, vm: &Vm, group: Option<&Group>, st: &mut UiState) {
                                 .map(String::as_str)
                                 .unwrap_or("—");
                             ui.add(
-                                egui::Label::new(RichText::new(sub).small().color(TEXT_SECONDARY))
-                                    .truncate(),
+                                egui::Label::new(
+                                    RichText::new(sub).small().color(p().text_secondary),
+                                )
+                                .truncate(),
                             );
                         });
                         if let Some(g) = group {
@@ -189,11 +193,13 @@ fn vm_card(ui: &mut Ui, vm: &Vm, group: Option<&Group>, st: &mut UiState) {
                             .into_iter()
                             .find(|s| !s.is_empty());
                         match address {
-                            Some(a) => ui.label(RichText::new(a).monospace().color(TEXT_STRONG)),
-                            None => ui.label(RichText::new("Aucune adresse").color(TEXT_MUTED)),
+                            Some(a) => {
+                                ui.label(RichText::new(a).monospace().color(p().text_strong))
+                            }
+                            None => ui.label(RichText::new("Aucune adresse").color(p().text_muted)),
                         };
                         if let Some(vlan) = vm.network.vlan {
-                            chip(ui, format!("VLAN {vlan}"), TEXT_SECONDARY);
+                            chip(ui, format!("VLAN {vlan}"), p().text_secondary);
                         }
                     });
                     if let Some(cmd) = ssh_command(vm, None) {
@@ -202,7 +208,7 @@ fn vm_card(ui: &mut Ui, vm: &Vm, group: Option<&Group>, st: &mut UiState) {
                                 RichText::new(format!("› {cmd}"))
                                     .monospace()
                                     .small()
-                                    .color(TEXT_SECONDARY),
+                                    .color(p().text_secondary),
                             )
                             .truncate(),
                         );
@@ -215,10 +221,10 @@ fn vm_card(ui: &mut Ui, vm: &Vm, group: Option<&Group>, st: &mut UiState) {
                                 if n > 1 { "s" } else { "" }
                             ))
                             .small()
-                            .color(TEXT_SECONDARY),
+                            .color(p().text_secondary),
                         );
                         for tag in &vm.tags {
-                            chip(ui, tag, ACCENT_2);
+                            chip(ui, tag, p().accent_2);
                         }
                     });
                 })

@@ -1,5 +1,7 @@
 # Compilation manuelle : onglet « Actions » → « Build » → « Run workflow ».
-# Les exécutables sont à télécharger en bas de la page du run (section « Artifacts »).
+# Les exécutables sont joints à une release en brouillon (onglet « Releases »,
+# visible uniquement par les mainteneurs tant qu'elle n'est pas publiée) et
+# restent aussi téléchargeables en bas de la page du run (section « Artifacts »).
 name: Build
 
 on:
@@ -17,6 +19,10 @@ on:
         description: "macOS Apple Silicon"
         type: boolean
         default: false
+      draft_release:
+        description: "Créer une release en brouillon avec les exécutables"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -62,7 +68,7 @@ jobs:
         if: steps.wanted.outputs.yes == 'true'
         run: cargo build --release --locked -p vm-manager
 
-      - name: Préparation du paquet
+      - name: Préparation de l'archive
         if: steps.wanted.outputs.yes == 'true'
         id: pkg
         shell: bash
@@ -71,13 +77,14 @@ jobs:
           name="vm-manager-${{ matrix.key }}-${short}"
           mkdir -p "dist/$name"
           cp "target/release/${{ matrix.exe }}" README.md LICENSE "dist/$name/"
+          cd dist
           if [ "${{ matrix.key }}" = "windows" ]; then
-            # Dossier envoyé tel quel : GitHub le livre déjà sous forme de .zip
-            echo "path=dist/$name" >> "$GITHUB_OUTPUT"
+            7z a -tzip "$name.zip" "$name" > /dev/null
+            echo "file=dist/$name.zip" >> "$GITHUB_OUTPUT"
           else
-            # Archive tar pour conserver le droit d'exécution du binaire
-            tar -czf "dist/$name.tar.gz" -C dist "$name"
-            echo "path=dist/$name.tar.gz" >> "$GITHUB_OUTPUT"
+            # tar conserve le droit d'exécution du binaire
+            tar -czf "$name.tar.gz" "$name"
+            echo "file=dist/$name.tar.gz" >> "$GITHUB_OUTPUT"
           fi
           echo "name=$name" >> "$GITHUB_OUTPUT"
 
@@ -85,6 +92,46 @@ jobs:
         if: steps.wanted.outputs.yes == 'true'
         with:
           name: ${{ steps.pkg.outputs.name }}
-          path: ${{ steps.pkg.outputs.path }}
+          path: ${{ steps.pkg.outputs.file }}
           retention-days: 14
           if-no-files-found: error
+
+  release:
+    name: Release en brouillon
+    needs: build
+    if: inputs.draft_release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Version
+        id: v
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | cut -d '"' -f2)
+          echo "tag=v${version}-build.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          ls -la dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          prerelease: true
+          tag_name: ${{ steps.v.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: VM Manager ${{ steps.v.outputs.tag }}
+          files: dist/*
+          body: |
+            Build de test depuis `${{ github.ref_name }}` (commit ${{ steps.v.outputs.short }}).
+
+            - **Windows** : `vm-manager-windows-*.zip` → décompresser, lancer `vm-manager.exe`
+              (non signé : SmartScreen → *Informations complémentaires* → *Exécuter quand même*).
+            - **Linux / macOS** : `tar xzf vm-manager-*.tar.gz` puis `./vm-manager`.
+
+            L'inventaire `vm-manager.json` est créé à côté de l'exécutable.

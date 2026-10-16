@@ -7,16 +7,16 @@ use crate::theme::*;
 
 pub fn card_frame() -> Frame {
     Frame::new()
-        .fill(BG_TERTIARY)
-        .stroke(Stroke::new(1.0, BORDER))
+        .fill(p().bg_tertiary)
+        .stroke(Stroke::new(1.0, p().border))
         .corner_radius(CornerRadius::same(RADIUS))
         .inner_margin(Margin::same(16))
 }
 
 pub fn inset_frame() -> Frame {
     Frame::new()
-        .fill(BG_SECONDARY)
-        .stroke(Stroke::new(1.0, BORDER))
+        .fill(p().bg_secondary)
+        .stroke(Stroke::new(1.0, p().border))
         .corner_radius(CornerRadius::same(RADIUS))
         .inner_margin(Margin::symmetric(12, 10))
 }
@@ -26,7 +26,10 @@ pub fn clickable_card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> egui::R
     ui.scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| {
         let hovered = ui.response().hovered();
         card_frame()
-            .stroke(Stroke::new(1.0, if hovered { ACCENT } else { BORDER }))
+            .stroke(Stroke::new(
+                1.0,
+                if hovered { p().accent_fg } else { p().border },
+            ))
             .show(ui, add);
     })
     .response
@@ -36,26 +39,26 @@ pub fn clickable_card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> egui::R
 pub fn primary_button(ui: &mut Ui, text: &str) -> egui::Response {
     ui.add(
         Button::new(RichText::new(text).color(Color32::WHITE).strong())
-            .fill(ACCENT)
+            .fill(p().accent)
             .stroke(Stroke::NONE),
     )
 }
 
 pub fn ghost_button(ui: &mut Ui, text: &str) -> egui::Response {
-    ui.add(Button::new(text).fill(BG_SECONDARY))
+    ui.add(Button::new(text).fill(p().bg_secondary))
 }
 
 pub fn danger_button(ui: &mut Ui, text: &str) -> egui::Response {
     ui.add(
         Button::new(RichText::new(text).color(Color32::WHITE).strong())
-            .fill(ERROR.linear_multiply(0.85))
+            .fill(p().error.linear_multiply(0.85))
             .stroke(Stroke::NONE),
     )
 }
 
 /// Bouton discret (icône seule) avec infobulle
 pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str) -> egui::Response {
-    ui.add(Button::new(RichText::new(icon).color(TEXT_SECONDARY)).frame(false))
+    ui.add(Button::new(RichText::new(icon).color(p().text_secondary)).frame(false))
         .on_hover_text(tooltip)
 }
 
@@ -83,8 +86,13 @@ pub fn color_dot(ui: &mut Ui, color: Color32) {
 pub fn page_header(ui: &mut Ui, title: &str, subtitle: &str, actions: impl FnOnce(&mut Ui)) {
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
-            ui.label(RichText::new(title).heading().strong().color(TEXT_STRONG));
-            ui.label(RichText::new(subtitle).color(TEXT_SECONDARY));
+            ui.label(
+                RichText::new(title)
+                    .heading()
+                    .strong()
+                    .color(p().text_strong),
+            );
+            ui.label(RichText::new(subtitle).color(p().text_secondary));
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), actions);
     });
@@ -96,7 +104,7 @@ pub fn section_title(ui: &mut Ui, text: &str) {
         RichText::new(text.to_uppercase())
             .small()
             .strong()
-            .color(TEXT_MUTED),
+            .color(p().text_muted),
     );
 }
 
@@ -104,9 +112,18 @@ pub fn section_title(ui: &mut Ui, text: &str) {
 pub fn field_label(ui: &mut Ui, label: &str, hint: Option<&str>) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        ui.label(RichText::new(label).small().strong().color(TEXT_SECONDARY));
+        ui.label(
+            RichText::new(label)
+                .small()
+                .strong()
+                .color(p().text_secondary),
+        );
         if let Some(hint) = hint {
-            ui.label(RichText::new(format!("— {hint}")).small().color(TEXT_MUTED));
+            ui.label(
+                RichText::new(format!("— {hint}"))
+                    .small()
+                    .color(p().text_muted),
+            );
         }
     });
 }
@@ -155,13 +172,13 @@ pub fn info_row(ui: &mut Ui, label: &str, value: &str, copy: bool, mono: bool) {
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 ui.set_width(110.0);
-                ui.label(RichText::new(label).color(TEXT_SECONDARY));
+                ui.label(RichText::new(label).color(p().text_secondary));
             },
         );
         if value.is_empty() {
-            ui.label(RichText::new("—").color(TEXT_MUTED));
+            ui.label(RichText::new("—").color(p().text_muted));
         } else {
-            let mut text = RichText::new(value).color(TEXT_STRONG);
+            let mut text = RichText::new(value).color(p().text_strong);
             if mono {
                 text = text.monospace();
             }
@@ -176,7 +193,7 @@ pub fn info_row(ui: &mut Ui, label: &str, value: &str, copy: bool, mono: bool) {
 pub fn error_text(ui: &mut Ui, error: &Option<String>) {
     if let Some(e) = error {
         ui.add_space(4.0);
-        ui.label(RichText::new(format!("⚠ {e}")).color(ERROR));
+        ui.label(RichText::new(format!("⚠ {e}")).color(p().error));
     }
 }
 
@@ -185,10 +202,10 @@ pub fn empty_state(ui: &mut Ui, icon: &str, title: &str, hint: &str, button: &st
     let mut clicked = false;
     ui.vertical_centered(|ui| {
         ui.add_space(60.0);
-        ui.label(RichText::new(icon).size(36.0).color(TEXT_SECONDARY));
+        ui.label(RichText::new(icon).size(36.0).color(p().text_secondary));
         ui.add_space(6.0);
-        ui.label(RichText::new(title).strong().color(TEXT_STRONG));
-        ui.label(RichText::new(hint).color(TEXT_SECONDARY));
+        ui.label(RichText::new(title).strong().color(p().text_strong));
+        ui.label(RichText::new(hint).color(p().text_secondary));
         ui.add_space(8.0);
         clicked = primary_button(ui, button).clicked();
     });
@@ -212,8 +229,8 @@ pub fn modal(
         .backdrop_color(Color32::from_black_alpha(150))
         .frame(
             Frame::new()
-                .fill(BG_TERTIARY)
-                .stroke(Stroke::new(1.0, BORDER))
+                .fill(p().bg_tertiary)
+                .stroke(Stroke::new(1.0, p().border))
                 .corner_radius(CornerRadius::same(RADIUS_LG))
                 .inner_margin(Margin::same(0)),
         )
@@ -224,9 +241,14 @@ pub fn modal(
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
-                            ui.label(RichText::new(title).size(17.0).strong().color(TEXT_STRONG));
+                            ui.label(
+                                RichText::new(title)
+                                    .size(17.0)
+                                    .strong()
+                                    .color(p().text_strong),
+                            );
                             if let Some(sub) = subtitle {
-                                ui.label(RichText::new(sub).small().color(TEXT_SECONDARY));
+                                ui.label(RichText::new(sub).small().color(p().text_secondary));
                             }
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {

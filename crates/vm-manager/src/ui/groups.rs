@@ -56,9 +56,9 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
                 color_dot(ui, parse_hex(g.color.as_deref()));
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
-                    ui.label(RichText::new(&g.name).strong().color(TEXT_STRONG));
+                    ui.label(RichText::new(&g.name).strong().color(p().text_strong));
                     let desc = if g.description.is_empty() { "Pas de description" } else { &g.description };
-                    ui.label(RichText::new(desc).small().color(TEXT_SECONDARY));
+                    ui.label(RichText::new(desc).small().color(p().text_secondary));
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if icon_button(ui, "🗑", "Supprimer").clicked() {
@@ -88,16 +88,16 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
             if open {
                 ui.separator();
                 if members.is_empty() {
-                    ui.label(RichText::new("Aucune VM dans ce groupe.").color(TEXT_MUTED));
+                    ui.label(RichText::new("Aucune VM dans ce groupe.").color(p().text_muted));
                 }
                 for vm in members {
                     let r = ui
                         .scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| {
                             ui.horizontal(|ui| {
                                 let ip = if vm.network.ip.is_empty() { "—" } else { &vm.network.ip };
-                                cell(ui, 200.0, RichText::new(&vm.name).color(TEXT_STRONG));
-                                cell(ui, 160.0, RichText::new(ip).monospace().color(TEXT_SECONDARY));
-                                ui.add(egui::Label::new(RichText::new(&vm.description).color(TEXT_SECONDARY)).truncate());
+                                cell(ui, 200.0, RichText::new(&vm.name).color(p().text_strong));
+                                cell(ui, 160.0, RichText::new(ip).monospace().color(p().text_secondary));
+                                ui.add(egui::Label::new(RichText::new(&vm.description).color(p().text_secondary)).truncate());
                             });
                         })
                         .response
@@ -150,7 +150,7 @@ pub fn form(ui: &Ui, st: &mut UiState) {
                             ui.painter().circle_stroke(
                                 rect.center(),
                                 12.5,
-                                Stroke::new(2.0, TEXT_STRONG),
+                                Stroke::new(2.0, p().text_strong),
                             );
                         }
                         if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
