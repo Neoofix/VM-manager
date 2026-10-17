@@ -72,7 +72,13 @@ pub fn show(ui: &Ui, store: &Store, st: &mut UiState) {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("🖧").color(p().accent_fg));
-                        ui.label(RichText::new(&h.name).strong().color(p().text_strong));
+                        // Lien vers la fiche de la machine physique
+                        let link = ui
+                            .link(RichText::new(&h.name).strong())
+                            .on_hover_text("Ouvrir la fiche de la machine physique");
+                        if link.clicked() {
+                            action = Some(Action::OpenHost(h.id.clone()));
+                        }
                         if !h.hypervisor.is_empty() {
                             chip(ui, &h.hypervisor, p().text_secondary);
                         }
@@ -156,6 +162,10 @@ pub fn show(ui: &Ui, store: &Store, st: &mut UiState) {
 
     match footer_action.or(action) {
         Some(Action::Edit) => st.vm_form = Some(VmForm::edit(vm)),
+        Some(Action::OpenHost(host_id)) => {
+            st.open_vm = None;
+            st.open_host(&host_id);
+        }
         Some(Action::Duplicate) => st.run(Command::DuplicateVm(vm.id.clone())),
         Some(Action::DeleteVm) => st.ask(
             "Supprimer la VM",
@@ -185,6 +195,7 @@ enum Action {
     Duplicate,
     DeleteVm,
     DeleteUser(String, String),
+    OpenHost(String),
 }
 
 fn two_columns(ui: &mut Ui, rows: &[(&str, &str, bool)]) {
