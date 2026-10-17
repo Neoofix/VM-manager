@@ -21,11 +21,12 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
     let vlans: HashSet<u16> = vms.iter().filter_map(|v| v.network.vlan).collect();
     let tiles = [
         ("🖥", vms.len(), "Machines virtuelles", Page::Vms),
+        ("🗄", store.hosts().len(), "Machines physiques", Page::Hosts),
         ("📁", store.groups().len(), "Groupes", Page::Groups),
         ("👤", users, "Comptes utilisateurs", Page::Vms),
         ("🔀", vlans.len(), "VLAN distincts", Page::Vms),
     ];
-    ui.columns(4, |cols| {
+    ui.columns(tiles.len(), |cols| {
         for (col, (icon, value, label, page)) in cols.iter_mut().zip(tiles) {
             let r = clickable_card(col, |ui| {
                 ui.set_width(ui.available_width());
@@ -52,6 +53,8 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
             if r.clicked() {
                 st.page = page;
                 st.group_filter = GroupFilter::All;
+                st.host_group_filter = GroupFilter::All;
+                st.open_host = None;
             }
         }
     });

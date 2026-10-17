@@ -11,6 +11,7 @@ use vm_core::{CoreError, CoreResult, ImportReport, KdfParams, Store, VaultKey};
 use crate::forms::{
     tab_for_error, GroupForm, PasswordChange, UserForm, VaultForm, VaultMode, VmForm,
 };
+use crate::host_form::{AssignState, HostForm};
 use crate::paths::DataSource;
 use crate::prefs::{self, Prefs};
 use crate::theme;
@@ -24,6 +25,8 @@ pub enum Page {
     #[default]
     Dashboard,
     Vms,
+    /// Machines physiques (hyperviseurs) : niveau entre le groupe et la VM
+    Hosts,
     Groups,
     Settings,
 }
@@ -45,6 +48,19 @@ pub enum Command {
     DeleteVm(String),
     SaveGroup,
     DeleteGroup(String),
+    /// Enregistre le formulaire de machine physique ouvert (`UiState::host_form`)
+    SaveHost,
+    /// Supprime une machine physique ; ses VM sont conservées (détachées)
+    DeleteHost(String),
+    /// Place des VM sur une machine physique : elles prennent son groupe
+    AssignVms {
+        host_id: String,
+        vm_ids: Vec<String>,
+    },
+    /// Retire une VM de sa machine physique ; elle garde son groupe
+    DetachVm {
+        vm_id: String,
+    },
     SaveUser,
     DeleteUser {
         vm_id: String,
@@ -86,6 +102,14 @@ pub struct UiState {
     pub open_vm: Option<String>,
     pub vm_form: Option<VmForm>,
     pub group_form: Option<GroupForm>,
+    /// Machine physique dont la fiche est ouverte (page « Machines physiques »)
+    pub open_host: Option<String>,
+    pub host_form: Option<HostForm>,
+    /// Fenêtre « Affecter des VM » d'une machine physique
+    pub assign_host: Option<AssignState>,
+    /// Recherche et filtre de groupe de la page « Machines physiques »
+    pub host_search: String,
+    pub host_group_filter: GroupFilter,
     pub user_form: Option<UserForm>,
     pub vault_form: Option<VaultForm>,
     pub confirm: Option<Confirm>,
@@ -136,6 +160,12 @@ impl UiState {
     pub fn open_vm(&mut self, id: &str) {
         self.page = Page::Vms;
         self.open_vm = Some(id.to_string());
+    }
+
+    /// Va sur la page « Machines physiques » et ouvre la fiche de cette machine
+    pub fn open_host(&mut self, id: &str) {
+        self.page = Page::Hosts;
+        self.open_host = Some(id.to_string());
     }
 
     pub fn is_unlocked(&self) -> bool {
@@ -377,8 +407,12 @@ fn run_command(store: &mut Store, st: &mut UiState, command: Command) {
         }
         Command::DeleteGroup(id) => match store.delete_group(&id) {
             Ok(detached) => {
-                if st.group_filter == GroupFilter::Group(id) {
+                let filter = GroupFilter::Group(id);
+                if st.group_filter == filter {
                     st.group_filter = GroupFilter::All;
+                }
+                if st.host_group_filter == filter {
+                    st.host_group_filter = GroupFilter::All;
                 }
                 st.success(if detached > 0 {
                     format!("Groupe supprimé, {detached} VM désormais non classée(s)")
@@ -386,6 +420,38 @@ fn run_command(store: &mut Store, st: &mut UiState, command: Command) {
                     "Groupe supprimé".to_string()
                 });
             }
+            Err(e) => st.error(e.to_string()),
+        },
+        Command::SaveHost => save_host(store, st),
+        Command::DeleteHost(id) => match store.delete_host(&id) {
+            Ok(detached) => {
+                st.open_host = None;
+                st.success(if detached > 0 {
+                    format!("Machine physique supprimée, {detached} VM conservée(s) sans machine")
+                } else {
+                    "Machine physique supprimée".to_string()
+                });
+            }
+            Err(e) => st.error(e.to_string()),
+        },
+        Command::AssignVms { host_id, vm_ids } => {
+            match store.assign_vms_to_host(&host_id, &vm_ids) {
+                Ok(placed) => {
+                    st.assign_host = None;
+                    let name = store
+                        .host(&host_id)
+                        .map(|h| h.name.clone())
+                        .unwrap_or_default();
+                    st.success(format!("{placed} VM affectée(s) à « {name} »"));
+                }
+                Err(e) => match &mut st.assign_host {
+                    Some(assign) => assign.error = Some(e.to_string()),
+                    None => st.error(e.to_string()),
+                },
+            }
+        }
+        Command::DetachVm { vm_id } => match store.set_vm_host(&vm_id, None) {
+            Ok(vm) => st.success(format!("« {} » retirée de la machine physique", vm.name)),
             Err(e) => st.error(e.to_string()),
         },
         Command::SaveUser => save_user(store, st),
@@ -440,11 +506,55 @@ fn run_command(store: &mut Store, st: &mut UiState, command: Command) {
     }
 }
 
+/// Enregistre la machine physique ; un changement de groupe entraîne ses VM
+fn save_host(store: &mut Store, st: &mut UiState) {
+    let Some(form) = &mut st.host_form else {
+        return;
+    };
+    let input = match form.to_input() {
+        Ok(input) => input,
+        Err(msg) => {
+            form.error = Some(msg);
+            return;
+        }
+    };
+    // VM qui changeront de groupe avec la machine (pour le message)
+    let moved = form.edit_id.as_deref().map_or(0, |id| {
+        store
+            .vms_on_host(id)
+            .iter()
+            .filter(|v| v.group_id != input.group_id)
+            .count()
+    });
+    let result = match &form.edit_id {
+        Some(id) => store.update_host(id, input),
+        None => store.create_host(input),
+    };
+    match result {
+        Ok(host) => {
+            let created = form.edit_id.is_none();
+            st.host_form = None;
+            st.open_host = Some(host.id.clone());
+            let mut message = if created {
+                format!("Machine physique « {} » créée", host.name)
+            } else {
+                format!("Machine physique « {} » mise à jour", host.name)
+            };
+            if moved > 0 {
+                message.push_str(&format!(" — {moved} VM déplacée(s) dans son groupe"));
+            }
+            st.success(message);
+        }
+        Err(e) => form.error = Some(e.to_string()),
+    }
+}
+
 /// Import d'un fichier ; un fichier chiffré demande d'abord son mot de passe maître
 fn import(store: &mut Store, st: &mut UiState, path: PathBuf, replace: bool) {
     match store.import_from(&path, replace, None) {
         Ok(report) => {
             st.open_vm = None;
+            st.open_host = None;
             drop_stale_key(store, st);
             st.success(import_message(report));
         }
@@ -554,6 +664,7 @@ fn submit_vault(store: &mut Store, st: &mut UiState) {
             }
             if matches!(form.mode, VaultMode::Import { .. }) {
                 st.open_vm = None;
+                st.open_host = None;
                 drop_stale_key(store, st);
             }
             st.success(message);
@@ -954,5 +1065,162 @@ mod tests {
         assert!(st2.vault_form.is_none());
         assert_eq!(other.vms()[0].name, "web");
         assert!(st2.pending_toasts.last().unwrap().1.contains("1 VM"));
+    }
+    fn group(store: &mut Store, name: &str) -> String {
+        store
+            .create_group(vm_core::GroupInput {
+                name: name.into(),
+                ..Default::default()
+            })
+            .unwrap()
+            .id
+    }
+
+    fn vm_in(store: &mut Store, name: &str, group_id: Option<&str>) -> String {
+        store
+            .create_vm(vm_core::VmInput {
+                name: name.into(),
+                group_id: group_id.map(String::from),
+                ..Default::default()
+            })
+            .unwrap()
+            .id
+    }
+
+    #[test]
+    fn saving_a_new_host_opens_its_sheet() {
+        let (_d, mut store, mut st) = app();
+        let gid = group(&mut store, "Prod");
+        let mut form = HostForm::create(Some(gid.clone()));
+        form.name = "pve-01".into();
+        form.ram = "64".into();
+        st.host_form = Some(form);
+        run_command(&mut store, &mut st, Command::SaveHost);
+        assert!(st.host_form.is_none());
+        let host = &store.hosts()[0];
+        assert_eq!(st.open_host.as_deref(), Some(host.id.as_str()));
+        assert_eq!(host.group_id.as_deref(), Some(gid.as_str()));
+        assert_eq!(host.ram_gb, Some(64));
+        assert!(st.pending_toasts[0].1.contains("pve-01"));
+    }
+
+    #[test]
+    fn invalid_host_keeps_form_open() {
+        let (_d, mut store, mut st) = app();
+        let mut form = HostForm::create(None);
+        form.name = "pve-01".into();
+        form.ram = "beaucoup".into();
+        st.host_form = Some(form);
+        run_command(&mut store, &mut st, Command::SaveHost);
+        let form = st.host_form.as_mut().unwrap();
+        assert!(form.error.as_ref().unwrap().contains("Mémoire vive"));
+        assert!(store.hosts().is_empty());
+
+        // Erreur du cœur (IP) : renvoyée dans le formulaire
+        form.ram = "0".into();
+        run_command(&mut store, &mut st, Command::SaveHost);
+        assert!(st.host_form.as_ref().unwrap().error.is_some());
+        st.host_form.as_mut().unwrap().ram.clear();
+        st.host_form.as_mut().unwrap().ip = "pas-une-ip".into();
+        run_command(&mut store, &mut st, Command::SaveHost);
+        assert!(st
+            .host_form
+            .as_ref()
+            .unwrap()
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("IP"));
+        assert!(store.hosts().is_empty());
+    }
+
+    #[test]
+    fn assign_detach_and_delete_host() {
+        let (_d, mut store, mut st) = app();
+        let prod = group(&mut store, "Prod");
+        let lab = group(&mut store, "Lab");
+        let a = vm_in(&mut store, "a", Some(&lab));
+        let b = vm_in(&mut store, "b", None);
+        let host = store
+            .create_host(vm_core::HostInput {
+                name: "pve-01".into(),
+                group_id: Some(prod.clone()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        st.assign_host = Some(AssignState::new(&host.id));
+        run_command(
+            &mut store,
+            &mut st,
+            Command::AssignVms {
+                host_id: host.id.clone(),
+                vm_ids: vec![a.clone(), b.clone()],
+            },
+        );
+        assert!(st.assign_host.is_none());
+        assert!(st.pending_toasts.last().unwrap().1.contains("2 VM"));
+        for id in [&a, &b] {
+            let vm = store.vm(id).unwrap();
+            assert_eq!(vm.host_id.as_deref(), Some(host.id.as_str()));
+            assert_eq!(vm.group_id.as_deref(), Some(prod.as_str()));
+        }
+
+        // Identifiant inconnu : rien n'est fait, l'erreur reste dans la fenêtre
+        st.assign_host = Some(AssignState::new(&host.id));
+        run_command(
+            &mut store,
+            &mut st,
+            Command::AssignVms {
+                host_id: host.id.clone(),
+                vm_ids: vec!["inconnue".into()],
+            },
+        );
+        assert!(st.assign_host.as_ref().unwrap().error.is_some());
+
+        run_command(&mut store, &mut st, Command::DetachVm { vm_id: a.clone() });
+        let vm = store.vm(&a).unwrap();
+        assert_eq!(vm.host_id, None);
+        assert_eq!(vm.group_id.as_deref(), Some(prod.as_str()));
+
+        // Changement de groupe de la machine : ses VM suivent
+        let mut form = HostForm::edit(store.host(&host.id).unwrap());
+        form.group_id = Some(lab.clone());
+        st.host_form = Some(form);
+        run_command(&mut store, &mut st, Command::SaveHost);
+        assert!(st
+            .pending_toasts
+            .last()
+            .unwrap()
+            .1
+            .contains("1 VM déplacée"));
+        assert_eq!(
+            store.vm(&b).unwrap().group_id.as_deref(),
+            Some(lab.as_str())
+        );
+
+        st.open_host(&host.id);
+        assert_eq!(st.page, Page::Hosts);
+        run_command(&mut store, &mut st, Command::DeleteHost(host.id.clone()));
+        assert!(store.hosts().is_empty());
+        assert!(st.open_host.is_none());
+        assert!(st
+            .pending_toasts
+            .last()
+            .unwrap()
+            .1
+            .contains("1 VM conservée"));
+        let vm = store.vm(&b).unwrap();
+        assert_eq!(vm.host_id, None);
+        assert_eq!(vm.group_id.as_deref(), Some(lab.as_str()));
+    }
+
+    #[test]
+    fn deleting_a_group_resets_host_filter() {
+        let (_d, mut store, mut st) = app();
+        let gid = group(&mut store, "Prod");
+        st.host_group_filter = GroupFilter::Group(gid.clone());
+        run_command(&mut store, &mut st, Command::DeleteGroup(gid));
+        assert_eq!(st.host_group_filter, GroupFilter::All);
     }
 }

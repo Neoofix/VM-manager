@@ -3,6 +3,7 @@
 
 mod app;
 mod forms;
+mod host_form;
 mod os_presets;
 mod paths;
 mod prefs;

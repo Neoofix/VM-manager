@@ -1,6 +1,7 @@
 /// Écrans de l'application
 mod dashboard;
 mod groups;
+mod hosts;
 mod settings;
 mod titlebar;
 mod vault;
@@ -21,9 +22,10 @@ use crate::paths::DataSource;
 use crate::theme::*;
 use widgets::{danger_button, ghost_button};
 
-const NAV: [(Page, &str, &str); 4] = [
+const NAV: [(Page, &str, &str); 5] = [
     (Page::Dashboard, "🏠", "Tableau de bord"),
     (Page::Vms, "🖥", "Machines virtuelles"),
+    (Page::Hosts, "🗄", "Machines physiques"),
     (Page::Groups, "📁", "Groupes"),
     (Page::Settings, "⚙", "Paramètres"),
 ];
@@ -43,17 +45,27 @@ pub fn show(ui: &mut Ui, store: &Store, data_path: &Path, source: DataSource, st
                     .show(ui, |ui| match st.page {
                         Page::Dashboard => dashboard::show(ui, store, st),
                         Page::Vms => vms::show(ui, store, st),
+                        Page::Hosts => hosts::show(ui, store, st),
                         Page::Groups => groups::show(ui, store, st),
                         Page::Settings => settings::show(ui, store, data_path, source, st),
                     });
             });
     });
 
-    // Fenêtres modales, au-dessus de la page
+    // Fenêtres modales, au-dessus de la page : une seule à la fois, les formulaires
+    // passent devant les fiches (qui réapparaissent à leur fermeture)
     if st.vm_form.is_some() {
         vm_form::show(ui, store, st);
-    } else if st.page == Page::Vms && st.open_vm.is_some() && st.confirm.is_none() {
-        vm_detail::show(ui, store, st);
+    } else if st.host_form.is_some() {
+        hosts::form(ui, store, st);
+    } else if st.assign_host.is_some() {
+        hosts::assign(ui, store, st);
+    } else if st.confirm.is_none() {
+        match st.page {
+            Page::Vms if st.open_vm.is_some() => vm_detail::show(ui, store, st),
+            Page::Hosts if st.open_host.is_some() => hosts::detail(ui, store, st),
+            _ => {}
+        }
     }
     if st.group_form.is_some() {
         groups::form(ui, st);
@@ -117,18 +129,22 @@ fn sidebar(ui: &mut Ui, store: &Store, st: &mut UiState) {
                     .min_size(egui::vec2(ui.available_width(), 34.0));
                 if ui.add(button).clicked() {
                     st.page = page;
-                    if page == Page::Vms {
-                        st.open_vm = None;
+                    match page {
+                        Page::Vms => st.open_vm = None,
+                        Page::Hosts => st.open_host = None,
+                        _ => {}
                     }
                 }
             }
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                 let groups = store.groups().len();
+                let hosts = store.hosts().len();
                 ui.label(
                     RichText::new(format!(
-                        "{} VM · {groups} groupe{}",
+                        "{} VM · {hosts} machine{} · {groups} groupe{}",
                         store.vms().len(),
+                        if hosts > 1 { "s" } else { "" },
                         if groups > 1 { "s" } else { "" }
                     ))
                     .small()
