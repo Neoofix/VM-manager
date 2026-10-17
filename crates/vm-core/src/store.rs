@@ -16,7 +16,7 @@ use zeroize::Zeroizing;
 
 use crate::error::{CoreError, CoreResult};
 use crate::models::*;
-use crate::validation::{normalize_group, normalize_user, normalize_vm};
+use crate::validation::{normalize_group, normalize_host, normalize_user, normalize_vm};
 use crate::vault::{self, EncryptedFile, KdfParams, VaultHeader, VaultKey};
 
 #[derive(Debug)]
@@ -34,6 +34,8 @@ pub struct Store {
 pub struct ImportReport {
     /// Groupes ajoutés
     pub groups: usize,
+    /// Machines physiques ajoutées
+    pub hosts: usize,
     /// VM ajoutées
     pub vms: usize,
     /// Mots de passe écartés car chiffrés par un autre coffre (indéchiffrables ici)
@@ -82,9 +84,10 @@ impl Store {
         };
 
         log::info!(
-            "Inventaire chargé depuis {:?} : {} groupes, {} VM",
+            "Inventaire chargé depuis {:?} : {} groupes, {} machines physiques, {} VM",
             path,
             data.groups.len(),
+            data.hosts.len(),
             data.vms.len()
         );
         Ok(Store {
@@ -189,14 +192,22 @@ impl Store {
         })
     }
 
-    /// Supprime un groupe ; ses VM sont conservées et deviennent « non classées ».
-    /// Renvoie le nombre de VM détachées.
+    /// Supprime un groupe ; ses machines physiques et ses VM sont conservées et
+    /// deviennent « non classées ». Renvoie le nombre de VM détachées.
     pub fn delete_group(&mut self, id: &str) -> CoreResult<usize> {
         self.commit(|data| {
             let before = data.groups.len();
             data.groups.retain(|g| g.id != id);
             if data.groups.len() == before {
                 return Err(CoreError::not_found("Groupe", id));
+            }
+            for host in data
+                .hosts
+                .iter_mut()
+                .filter(|h| h.group_id.as_deref() == Some(id))
+            {
+                host.group_id = None;
+                host.touch();
             }
             let mut detached = 0;
             for vm in data
@@ -209,6 +220,120 @@ impl Store {
                 detached += 1;
             }
             Ok(detached)
+        })
+    }
+
+    // ── Machines physiques ────────────────────────────────────────────────
+
+    pub fn hosts(&self) -> &[Host] {
+        &self.data.hosts
+    }
+
+    pub fn host(&self, id: &str) -> CoreResult<&Host> {
+        self.data
+            .hosts
+            .iter()
+            .find(|h| h.id == id)
+            .ok_or_else(|| CoreError::not_found("Machine physique", id))
+    }
+
+    /// VM hébergées par une machine physique
+    pub fn vms_on_host(&self, host_id: &str) -> Vec<&Vm> {
+        self.data
+            .vms
+            .iter()
+            .filter(|v| v.host_id.as_deref() == Some(host_id))
+            .collect()
+    }
+
+    pub fn create_host(&mut self, input: HostInput) -> CoreResult<Host> {
+        let input = normalize_host(input)?;
+        self.commit(|data| {
+            ensure_host_refs(data, &input, None)?;
+            let host = Host::from_input(input);
+            data.hosts.push(host.clone());
+            Ok(host)
+        })
+    }
+
+    /// Modifie une machine physique ; si son groupe change, toutes ses VM le suivent
+    pub fn update_host(&mut self, id: &str, input: HostInput) -> CoreResult<Host> {
+        let input = normalize_host(input)?;
+        self.commit(|data| {
+            ensure_host_refs(data, &input, Some(id))?;
+            let host = find_host_mut(data, id)?;
+            host.apply(input);
+            let host = host.clone();
+            for vm in data
+                .vms
+                .iter_mut()
+                .filter(|v| v.host_id.as_deref() == Some(id) && v.group_id != host.group_id)
+            {
+                vm.group_id = host.group_id.clone();
+                vm.touch();
+            }
+            Ok(host)
+        })
+    }
+
+    /// Supprime une machine physique ; ses VM sont conservées, détachées de la
+    /// machine mais dans leur groupe actuel. Renvoie le nombre de VM détachées.
+    pub fn delete_host(&mut self, id: &str) -> CoreResult<usize> {
+        self.commit(|data| {
+            let before = data.hosts.len();
+            data.hosts.retain(|h| h.id != id);
+            if data.hosts.len() == before {
+                return Err(CoreError::not_found("Machine physique", id));
+            }
+            let mut detached = 0;
+            for vm in data
+                .vms
+                .iter_mut()
+                .filter(|v| v.host_id.as_deref() == Some(id))
+            {
+                vm.host_id = None;
+                vm.touch();
+                detached += 1;
+            }
+            Ok(detached)
+        })
+    }
+
+    /// Place une VM sur une machine physique (elle prend alors son groupe), ou
+    /// l'en retire avec `None` (elle garde son groupe actuel)
+    pub fn set_vm_host(&mut self, vm_id: &str, host_id: Option<&str>) -> CoreResult<Vm> {
+        let host_id = host_id.map(str::trim).filter(|h| !h.is_empty());
+        self.commit(|data| {
+            let group_id = host_id.map(|h| host_group(data, h)).transpose()?;
+            let vm = find_vm_mut(data, vm_id)?;
+            vm.host_id = host_id.map(String::from);
+            if let Some(group_id) = group_id {
+                vm.group_id = group_id;
+            }
+            vm.touch();
+            Ok(vm.clone())
+        })
+    }
+
+    /// Place plusieurs VM sur une machine physique, tout ou rien : un seul
+    /// identifiant inconnu annule l'ensemble. Renvoie le nombre de VM placées.
+    pub fn assign_vms_to_host(&mut self, host_id: &str, vm_ids: &[String]) -> CoreResult<usize> {
+        self.commit(|data| {
+            let group_id = host_group(data, host_id)?;
+            let mut placed: Vec<&str> = Vec::new();
+            for vm_id in vm_ids {
+                if placed.contains(&vm_id.as_str()) {
+                    continue;
+                }
+                let vm = find_vm_mut(data, vm_id)?;
+                if vm.host_id.as_deref() != Some(host_id) || vm.group_id != group_id {
+                    vm.host_id = Some(host_id.to_string());
+                    vm.group_id = group_id.clone();
+                    vm.touch();
+                }
+                placed.push(vm_id);
+            }
+            Ok(placed.len())
         })
     }
 
@@ -226,20 +351,22 @@ impl Store {
             .ok_or_else(|| CoreError::not_found("VM", id))
     }
 
+    /// Crée une VM ; placée sur une machine physique, elle en prend le groupe
     pub fn create_vm(&mut self, input: VmInput) -> CoreResult<Vm> {
-        let input = normalize_vm(input)?;
+        let mut input = normalize_vm(input)?;
         self.commit(|data| {
-            ensure_vm_refs(data, &input, None)?;
+            ensure_vm_refs(data, &mut input, None)?;
             let vm = Vm::from_input(input);
             data.vms.push(vm.clone());
             Ok(vm)
         })
     }
 
+    /// Modifie une VM ; placée sur une machine physique, elle en prend le groupe
     pub fn update_vm(&mut self, id: &str, input: VmInput) -> CoreResult<Vm> {
-        let input = normalize_vm(input)?;
+        let mut input = normalize_vm(input)?;
         self.commit(|data| {
-            ensure_vm_refs(data, &input, Some(id))?;
+            ensure_vm_refs(data, &mut input, Some(id))?;
             let vm = find_vm_mut(data, id)?;
             vm.apply(input);
             Ok(vm.clone())
@@ -257,7 +384,7 @@ impl Store {
         })
     }
 
-    /// Duplique une VM (réseau, SSH et utilisateurs compris) sous un nom libre
+    /// Duplique une VM (réseau, SSH, utilisateurs et machine physique compris) sous un nom libre
     pub fn duplicate_vm(&mut self, id: &str) -> CoreResult<Vm> {
         self.commit(|data| {
             let source = data
@@ -348,8 +475,10 @@ impl Store {
 
     /// Importe un fichier exporté, en clair ou chiffré (`master` est alors exigé,
     /// sinon `CoreError::Locked`). `replace` remplace tout l'inventaire ; sinon les
-    /// groupes et VM sont ajoutés, en ignorant ceux dont l'identifiant ou le nom
-    /// existe déjà.
+    /// groupes, machines physiques et VM sont ajoutés, en ignorant ceux dont
+    /// l'identifiant ou le nom existe déjà. Les références vers un groupe ou une
+    /// machine absents sont retirées, et chaque VM importée placée sur une machine
+    /// prend le groupe de celle-ci.
     ///
     /// Les mots de passe importés ne sont gardés que s'ils restent déchiffrables :
     /// même coffre (même sel) que l'inventaire courant, ou remplacement complet
@@ -399,6 +528,22 @@ impl Store {
                     report.groups += 1;
                 }
             }
+            for mut host in incoming.hosts {
+                let taken = data
+                    .hosts
+                    .iter()
+                    .any(|o| o.id == host.id || o.name.eq_ignore_ascii_case(&host.name));
+                if taken || normalize_host(host_input(&host)).is_err() {
+                    continue;
+                }
+                if let Some(gid) = &host.group_id {
+                    if !data.groups.iter().any(|g| &g.id == gid) {
+                        host.group_id = None;
+                    }
+                }
+                data.hosts.push(host);
+                report.hosts += 1;
+            }
             for mut vm in incoming.vms {
                 let taken = data
                     .vms
@@ -407,7 +552,13 @@ impl Store {
                 if taken || vm.name.trim().is_empty() {
                     continue;
                 }
-                // Un groupe absent du fichier ne doit pas laisser de référence orpheline
+                // Une machine ou un groupe absents ne doivent pas laisser de référence orpheline
+                if let Some(hid) = &vm.host_id {
+                    match data.hosts.iter().find(|h| &h.id == hid) {
+                        Some(host) => vm.group_id = host.group_id.clone(),
+                        None => vm.host_id = None,
+                    }
+                }
                 if let Some(gid) = &vm.group_id {
                     if !data.groups.iter().any(|g| &g.id == gid) {
                         vm.group_id = None;
@@ -645,6 +796,61 @@ fn find_group_mut<'a>(data: &'a mut AppData, id: &str) -> CoreResult<&'a mut Gro
         .ok_or_else(|| CoreError::not_found("Groupe", id))
 }
 
+fn host_input(h: &Host) -> HostInput {
+    HostInput {
+        name: h.name.clone(),
+        description: h.description.clone(),
+        group_id: h.group_id.clone(),
+        hypervisor: h.hypervisor.clone(),
+        hostname: h.hostname.clone(),
+        ip: h.ip.clone(),
+        cpu: h.cpu.clone(),
+        ram_gb: h.ram_gb,
+        storage: h.storage.clone(),
+        location: h.location.clone(),
+        notes: h.notes.clone(),
+    }
+}
+
+fn find_host_mut<'a>(data: &'a mut AppData, id: &str) -> CoreResult<&'a mut Host> {
+    data.hosts
+        .iter_mut()
+        .find(|h| h.id == id)
+        .ok_or_else(|| CoreError::not_found("Machine physique", id))
+}
+
+/// Groupe d'une machine physique (`NotFound` si elle n'existe pas)
+fn host_group(data: &AppData, host_id: &str) -> CoreResult<Option<String>> {
+    data.hosts
+        .iter()
+        .find(|h| h.id == host_id)
+        .map(|h| h.group_id.clone())
+        .ok_or_else(|| CoreError::not_found("Machine physique", host_id))
+}
+
+fn ensure_group_exists(data: &AppData, group_id: Option<&str>) -> CoreResult<()> {
+    if let Some(gid) = group_id {
+        if !data.groups.iter().any(|g| g.id == gid) {
+            return Err(CoreError::not_found("Groupe", gid));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_host_refs(data: &AppData, input: &HostInput, except: Option<&str>) -> CoreResult<()> {
+    let clash = data
+        .hosts
+        .iter()
+        .any(|h| Some(h.id.as_str()) != except && h.name.eq_ignore_ascii_case(&input.name));
+    if clash {
+        return Err(CoreError::Conflict(format!(
+            "Une machine physique nommée « {} » existe déjà",
+            input.name
+        )));
+    }
+    ensure_group_exists(data, input.group_id.as_deref())
+}
+
 fn find_vm_mut<'a>(data: &'a mut AppData, id: &str) -> CoreResult<&'a mut Vm> {
     data.vms
         .iter_mut()
@@ -665,7 +871,9 @@ fn ensure_unique_group_name(data: &AppData, name: &str, except: Option<&str>) ->
     Ok(())
 }
 
-fn ensure_vm_refs(data: &AppData, input: &VmInput, except: Option<&str>) -> CoreResult<()> {
+/// Vérifie le nom et les références d'une VM ; si elle est placée sur une
+/// machine physique, son groupe est remplacé par celui de la machine
+fn ensure_vm_refs(data: &AppData, input: &mut VmInput, except: Option<&str>) -> CoreResult<()> {
     let clash = data
         .vms
         .iter()
@@ -676,12 +884,10 @@ fn ensure_vm_refs(data: &AppData, input: &VmInput, except: Option<&str>) -> Core
             input.name
         )));
     }
-    if let Some(gid) = &input.group_id {
-        if !data.groups.iter().any(|g| &g.id == gid) {
-            return Err(CoreError::not_found("Groupe", gid.clone()));
-        }
+    if let Some(hid) = &input.host_id {
+        input.group_id = host_group(data, hid)?;
     }
-    Ok(())
+    ensure_group_exists(data, input.group_id.as_deref())
 }
 
 fn ensure_unique_username(vm: &Vm, username: &str, except: Option<&str>) -> CoreResult<()> {
@@ -1013,6 +1219,7 @@ mod tests {
     fn report(groups: usize, vms: usize) -> ImportReport {
         ImportReport {
             groups,
+            hosts: 0,
             vms,
             passwords_dropped: 0,
         }
@@ -1399,5 +1606,354 @@ mod tests {
         let r = locked.import_from(&export, true, Some(MASTER)).unwrap();
         assert_eq!((r.vms, r.passwords_dropped), (1, 1));
         assert!(locked.vault().unwrap().verify(&own));
+    }
+
+    // ── Machines physiques ────────────────────────────────────────────────
+
+    fn host(name: &str, group_id: Option<&str>) -> HostInput {
+        HostInput {
+            name: name.into(),
+            group_id: group_id.map(String::from),
+            ..Default::default()
+        }
+    }
+
+    fn vm_on(name: &str, host_id: &str, group_id: Option<&str>) -> VmInput {
+        VmInput {
+            host_id: Some(host_id.into()),
+            ..vm(name, group_id)
+        }
+    }
+
+    #[test]
+    fn host_crud_and_unique_names() {
+        let (dir, mut s) = store();
+        let g = s.create_group(group("Prod")).unwrap();
+        let mut input = host(" pve-01 ", Some(&g.id));
+        input.ip = "10.0.0.2".into();
+        input.ram_gb = Some(64);
+        let h = s.create_host(input).unwrap();
+        assert_eq!(h.name, "pve-01");
+        assert_eq!(s.host(&h.id).unwrap().ram_gb, Some(64));
+        assert!(matches!(
+            s.create_host(host("PVE-01", None)),
+            Err(CoreError::Conflict(_))
+        ));
+        assert!(matches!(
+            s.create_host(host("x", Some("absent"))),
+            Err(CoreError::NotFound { .. })
+        ));
+        let mut bad = host("y", None);
+        bad.ip = "pas-une-ip".into();
+        assert!(matches!(s.create_host(bad), Err(CoreError::Validation(_))));
+
+        let other = s.create_host(host("esx-01", None)).unwrap();
+        assert!(s.update_host(&other.id, host("pve-01", None)).is_err());
+        let renamed = s.update_host(&h.id, host("PVE-01", Some(&g.id))).unwrap();
+        assert_eq!(renamed.name, "PVE-01");
+        assert!(renamed.updated_at >= renamed.created_at);
+        assert!(s.update_host("absent", host("z", None)).is_err());
+
+        let reopened = Store::open(dir.path().join("data.json")).unwrap();
+        assert_eq!(reopened.hosts(), s.hosts());
+
+        assert_eq!(s.delete_host(&other.id).unwrap(), 0);
+        assert_eq!(s.hosts().len(), 1);
+        assert!(matches!(
+            s.delete_host(&other.id),
+            Err(CoreError::NotFound { .. })
+        ));
+        assert!(s.host(&other.id).is_err());
+    }
+
+    #[test]
+    fn vm_on_host_takes_the_host_group() {
+        let (_d, mut s) = store();
+        let prod = s.create_group(group("Prod")).unwrap();
+        let lab = s.create_group(group("Lab")).unwrap();
+        let h = s.create_host(host("pve-01", Some(&prod.id))).unwrap();
+
+        // Création : le groupe saisi est remplacé par celui de la machine
+        let v = s.create_vm(vm_on("a", &h.id, Some(&lab.id))).unwrap();
+        assert_eq!(v.host_id.as_deref(), Some(h.id.as_str()));
+        assert_eq!(v.group_id.as_deref(), Some(prod.id.as_str()));
+
+        // Modification : idem
+        let v = s.update_vm(&v.id, vm_on("a", &h.id, None)).unwrap();
+        assert_eq!(v.group_id.as_deref(), Some(prod.id.as_str()));
+
+        // Sans machine, la VM garde son propre groupe
+        let v = s.update_vm(&v.id, vm("a", Some(&lab.id))).unwrap();
+        assert_eq!(v.host_id, None);
+        assert_eq!(v.group_id.as_deref(), Some(lab.id.as_str()));
+
+        // Machine inconnue
+        let before = s.data().clone();
+        assert!(matches!(
+            s.create_vm(vm_on("b", "absent", None)),
+            Err(CoreError::NotFound {
+                kind: "Machine physique",
+                ..
+            })
+        ));
+        assert!(s.update_vm(&v.id, vm_on("a", "absent", None)).is_err());
+        assert_eq!(s.data(), &before);
+
+        // Machine sans groupe : la VM devient non classée
+        let bare = s.create_host(host("bare", None)).unwrap();
+        let w = s.create_vm(vm_on("w", &bare.id, Some(&lab.id))).unwrap();
+        assert_eq!(w.group_id, None);
+        assert_eq!(s.vms_on_host(&bare.id).len(), 1);
+        assert_eq!(s.vms_on_host(&h.id).len(), 0);
+    }
+
+    #[test]
+    fn set_vm_host_applies_and_removes_the_host() {
+        let (_d, mut s) = store();
+        let prod = s.create_group(group("Prod")).unwrap();
+        let lab = s.create_group(group("Lab")).unwrap();
+        let h = s.create_host(host("pve-01", Some(&prod.id))).unwrap();
+        let v = s.create_vm(vm("a", Some(&lab.id))).unwrap();
+
+        let placed = s.set_vm_host(&v.id, Some(&h.id)).unwrap();
+        assert_eq!(placed.host_id.as_deref(), Some(h.id.as_str()));
+        assert_eq!(placed.group_id.as_deref(), Some(prod.id.as_str()));
+        assert_eq!(s.vm(&v.id).unwrap(), &placed);
+
+        // Retirée de la machine : elle garde le groupe de la machine
+        let removed = s.set_vm_host(&v.id, None).unwrap();
+        assert_eq!(removed.host_id, None);
+        assert_eq!(removed.group_id.as_deref(), Some(prod.id.as_str()));
+
+        assert!(matches!(
+            s.set_vm_host(&v.id, Some("absent")),
+            Err(CoreError::NotFound { .. })
+        ));
+        assert!(matches!(
+            s.set_vm_host("absent", Some(&h.id)),
+            Err(CoreError::NotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn assign_vms_to_host_is_all_or_nothing() {
+        let (_d, mut s) = store();
+        let prod = s.create_group(group("Prod")).unwrap();
+        let h = s.create_host(host("pve-01", Some(&prod.id))).unwrap();
+        let a = s.create_vm(vm("a", None)).unwrap();
+        let b = s.create_vm(vm("b", None)).unwrap();
+
+        let before = s.data().clone();
+        let ids = vec![a.id.clone(), "absent".to_string()];
+        assert!(matches!(
+            s.assign_vms_to_host(&h.id, &ids),
+            Err(CoreError::NotFound { .. })
+        ));
+        assert_eq!(s.data(), &before);
+        assert!(s
+            .assign_vms_to_host("absent", std::slice::from_ref(&a.id))
+            .is_err());
+
+        let ids = vec![a.id.clone(), b.id.clone(), a.id.clone()];
+        assert_eq!(s.assign_vms_to_host(&h.id, &ids).unwrap(), 2);
+        for v in s.vms() {
+            assert_eq!(v.host_id.as_deref(), Some(h.id.as_str()));
+            assert_eq!(v.group_id.as_deref(), Some(prod.id.as_str()));
+        }
+        assert_eq!(s.vms_on_host(&h.id).len(), 2);
+        assert_eq!(s.assign_vms_to_host(&h.id, &[]).unwrap(), 0);
+    }
+
+    #[test]
+    fn changing_host_group_moves_its_vms() {
+        let (_d, mut s) = store();
+        let prod = s.create_group(group("Prod")).unwrap();
+        let lab = s.create_group(group("Lab")).unwrap();
+        let h = s.create_host(host("pve-01", Some(&prod.id))).unwrap();
+        let a = s.create_vm(vm_on("a", &h.id, None)).unwrap();
+        let b = s.create_vm(vm_on("b", &h.id, None)).unwrap();
+        let other = s.create_vm(vm("c", Some(&prod.id))).unwrap();
+
+        s.update_host(&h.id, host("pve-01", Some(&lab.id))).unwrap();
+        for id in [&a.id, &b.id] {
+            let v = s.vm(id).unwrap();
+            assert_eq!(v.group_id.as_deref(), Some(lab.id.as_str()));
+            assert!(v.updated_at >= a.updated_at);
+        }
+        // Une VM hors de la machine n'est pas touchée
+        assert_eq!(s.vm(&other.id).unwrap(), &other);
+
+        s.update_host(&h.id, host("pve-01", None)).unwrap();
+        assert!(s.vms_on_host(&h.id).iter().all(|v| v.group_id.is_none()));
+    }
+
+    #[test]
+    fn deleting_a_host_detaches_vms_keeping_their_group() {
+        let (_d, mut s) = store();
+        let prod = s.create_group(group("Prod")).unwrap();
+        let h = s.create_host(host("pve-01", Some(&prod.id))).unwrap();
+        s.create_vm(vm_on("a", &h.id, None)).unwrap();
+        s.create_vm(vm_on("b", &h.id, None)).unwrap();
+        s.create_vm(vm("c", None)).unwrap();
+
+        assert_eq!(s.delete_host(&h.id).unwrap(), 2);
+        assert!(s.hosts().is_empty());
+        assert_eq!(s.vms().len(), 3);
+        assert!(s.vms().iter().all(|v| v.host_id.is_none()));
+        let grouped = s
+            .vms()
+            .iter()
+            .filter(|v| v.group_id.as_deref() == Some(prod.id.as_str()))
+            .count();
+        assert_eq!(grouped, 2);
+    }
+
+    #[test]
+    fn deleting_a_group_ungroups_its_hosts_and_their_vms() {
+        let (_d, mut s) = store();
+        let prod = s.create_group(group("Prod")).unwrap();
+        let lab = s.create_group(group("Lab")).unwrap();
+        let h = s.create_host(host("pve-01", Some(&prod.id))).unwrap();
+        let keep = s.create_host(host("esx-01", Some(&lab.id))).unwrap();
+        s.create_vm(vm_on("a", &h.id, None)).unwrap();
+        s.create_vm(vm("b", Some(&prod.id))).unwrap();
+        s.create_vm(vm_on("c", &keep.id, None)).unwrap();
+
+        assert_eq!(s.delete_group(&prod.id).unwrap(), 2);
+        assert_eq!(s.host(&h.id).unwrap().group_id, None);
+        assert_eq!(
+            s.host(&keep.id).unwrap().group_id.as_deref(),
+            Some(lab.id.as_str())
+        );
+        // Les VM restent sur leur machine
+        assert_eq!(s.vms_on_host(&h.id)[0].group_id, None);
+        assert_eq!(
+            s.vms_on_host(&keep.id)[0].group_id.as_deref(),
+            Some(lab.id.as_str())
+        );
+    }
+
+    #[test]
+    fn duplicate_vm_keeps_its_host() {
+        let (_d, mut s) = store();
+        let prod = s.create_group(group("Prod")).unwrap();
+        let h = s.create_host(host("pve-01", Some(&prod.id))).unwrap();
+        let v = s.create_vm(vm_on("web", &h.id, None)).unwrap();
+        let copy = s.duplicate_vm(&v.id).unwrap();
+        assert_eq!(copy.host_id.as_deref(), Some(h.id.as_str()));
+        assert_eq!(copy.group_id.as_deref(), Some(prod.id.as_str()));
+        assert_eq!(s.vms_on_host(&h.id).len(), 2);
+    }
+
+    #[test]
+    fn import_merges_and_replaces_hosts() {
+        let (dir, mut s) = store();
+        let g = s.create_group(group("Prod")).unwrap();
+        let h = s.create_host(host("pve-01", Some(&g.id))).unwrap();
+        s.create_vm(vm_on("a", &h.id, None)).unwrap();
+        let export = dir.path().join("export.json");
+        s.export_to(&export).unwrap();
+
+        // Fusion dans l'inventaire d'origine : rien n'est dupliqué
+        let r = s.import_from(&export, false, None).unwrap();
+        assert_eq!((r.groups, r.hosts, r.vms), (0, 0, 0));
+
+        // Une machine de même nom (autre identifiant) bloque l'import de la machine,
+        // et la VM qui la référençait est détachée
+        let (_d2, mut other) = store();
+        other.create_host(host("PVE-01", None)).unwrap();
+        let r = other.import_from(&export, false, None).unwrap();
+        assert_eq!((r.groups, r.hosts, r.vms), (1, 0, 1));
+        let a = other.vms().iter().find(|v| v.name == "a").unwrap();
+        assert_eq!(a.host_id, None);
+        assert_eq!(a.group_id.as_deref(), Some(g.id.as_str()));
+
+        // Fusion dans un inventaire vide
+        let (_d3, mut empty) = store();
+        let r = empty.import_from(&export, false, None).unwrap();
+        assert_eq!((r.groups, r.hosts, r.vms), (1, 1, 1));
+        assert_eq!(empty.vms_on_host(&h.id).len(), 1);
+
+        // Remplacement complet
+        let r = other.import_from(&export, true, None).unwrap();
+        assert_eq!((r.groups, r.hosts, r.vms), (1, 1, 1));
+        assert_eq!(other.hosts().len(), 1);
+        assert_eq!(other.hosts()[0].id, h.id);
+        assert_eq!(other.vms()[0].host_id.as_deref(), Some(h.id.as_str()));
+    }
+
+    #[test]
+    fn import_fixes_dangling_and_inconsistent_host_refs() {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("in.json");
+        let mut data = AppData::default();
+        let g = Group::from_input(group("Prod"));
+        let mut h = Host::from_input(host("pve-01", None));
+        h.group_id = Some(g.id.clone());
+        let mut lost = Host::from_input(host("orphan-host", None));
+        lost.group_id = Some("ghost-group".into());
+        let mut dangling = Vm::from_input(vm("dangling", None));
+        dangling.host_id = Some("ghost-host".into());
+        dangling.group_id = Some(g.id.clone());
+        let mut inconsistent = Vm::from_input(vm("inconsistent", None));
+        inconsistent.host_id = Some(h.id.clone());
+        data.groups.push(g.clone());
+        data.hosts.extend([h.clone(), lost.clone()]);
+        data.vms.extend([dangling, inconsistent]);
+        fs::write(&file, serde_json::to_string(&data).unwrap()).unwrap();
+
+        let (_d, mut s) = store();
+        let r = s.import_from(&file, false, None).unwrap();
+        assert_eq!((r.groups, r.hosts, r.vms), (1, 2, 2));
+        assert_eq!(s.host(&lost.id).unwrap().group_id, None);
+        let d = s.vms().iter().find(|v| v.name == "dangling").unwrap();
+        assert_eq!(d.host_id, None);
+        assert_eq!(d.group_id.as_deref(), Some(g.id.as_str()));
+        // La VM placée sur une machine en reprend le groupe
+        let i = s.vms().iter().find(|v| v.name == "inconsistent").unwrap();
+        assert_eq!(i.host_id.as_deref(), Some(h.id.as_str()));
+        assert_eq!(i.group_id.as_deref(), Some(g.id.as_str()));
+    }
+
+    #[test]
+    fn legacy_json_without_hosts_loads() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("data.json");
+        fs::write(
+            &path,
+            r#"{"version":1,"groups":[{"id":"g","name":"Prod","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}],"vms":[{"id":"1","name":"old","group_id":"g","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}]}"#,
+        )
+        .unwrap();
+        let mut s = Store::open(&path).unwrap();
+        assert!(s.hosts().is_empty());
+        assert_eq!(s.vms()[0].host_id, None);
+        assert_eq!(s.vms()[0].group_id.as_deref(), Some("g"));
+        // L'inventaire ancien accepte ensuite des machines physiques
+        let h = s.create_host(host("pve-01", Some("g"))).unwrap();
+        s.set_vm_host("1", Some(&h.id)).unwrap();
+        let reopened = Store::open(&path).unwrap();
+        assert_eq!(reopened.vms()[0].host_id.as_deref(), Some(h.id.as_str()));
+    }
+
+    #[test]
+    fn encrypted_store_keeps_hosts() {
+        let (dir, mut s, _key, vm_id, _user_id) = store_with_password();
+        let path = dir.path().join("data.json");
+        s.enable_file_encryption(MASTER).unwrap();
+        let h = s.create_host(host("hyperviseur-secret", None)).unwrap();
+        s.set_vm_host(&vm_id, Some(&h.id)).unwrap();
+        drop(s);
+
+        let raw = fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("hyperviseur-secret"));
+        assert!(matches!(Store::open(&path), Err(CoreError::Locked)));
+        let (mut reopened, _key) = Store::open_with_password(&path, MASTER).unwrap();
+        assert_eq!(reopened.host(&h.id).unwrap().name, "hyperviseur-secret");
+        assert_eq!(reopened.vms_on_host(&h.id).len(), 1);
+        reopened
+            .update_host(&h.id, host("hyperviseur-renomme", None))
+            .unwrap();
+        let (again, _key) = Store::open_with_password(&path, MASTER).unwrap();
+        assert_eq!(again.hosts()[0].name, "hyperviseur-renomme");
     }
 }

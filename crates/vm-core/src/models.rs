@@ -30,6 +30,9 @@ pub struct AppData {
     pub version: u32,
     #[serde(default)]
     pub groups: Vec<Group>,
+    /// Machines physiques (hyperviseurs) qui hébergent les VM
+    #[serde(default)]
+    pub hosts: Vec<Host>,
     #[serde(default)]
     pub vms: Vec<Vm>,
     /// Coffre des mots de passe (absent tant qu'aucun mot de passe maître n'a été défini)
@@ -42,6 +45,7 @@ impl Default for AppData {
         AppData {
             version: SCHEMA_VERSION,
             groups: Vec::new(),
+            hosts: Vec::new(),
             vms: Vec::new(),
             vault: None,
         }
@@ -90,6 +94,115 @@ impl Group {
         self.name = input.name;
         self.description = input.description;
         self.color = input.color;
+        self.updated_at = Utc::now();
+    }
+}
+
+// ── Machines physiques ────────────────────────────────────────────────────
+
+/// Machine physique (hyperviseur) : niveau intermédiaire entre le groupe et la VM.
+/// Ses VM partagent toujours son groupe.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Host {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub group_id: Option<String>,
+    /// Hyperviseur installé (Proxmox VE, ESXi, Hyper-V…)
+    #[serde(default)]
+    pub hypervisor: String,
+    #[serde(default)]
+    pub hostname: String,
+    /// Adresse IPv4 ou IPv6 d'administration
+    #[serde(default)]
+    pub ip: String,
+    /// Processeur (texte libre : modèle, nombre de cœurs…)
+    #[serde(default)]
+    pub cpu: String,
+    /// Mémoire vive en Go
+    #[serde(default)]
+    pub ram_gb: Option<u32>,
+    /// Stockage (texte libre : disques, capacité…)
+    #[serde(default)]
+    pub storage: String,
+    /// Emplacement physique (salle, baie, unité…)
+    #[serde(default)]
+    pub location: String,
+    #[serde(default)]
+    pub notes: String,
+    #[serde(default = "Utc::now")]
+    pub created_at: DateTime<Utc>,
+    #[serde(default = "Utc::now")]
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Saisie d'une machine physique (création et modification)
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct HostInput {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub group_id: Option<String>,
+    #[serde(default)]
+    pub hypervisor: String,
+    #[serde(default)]
+    pub hostname: String,
+    #[serde(default)]
+    pub ip: String,
+    #[serde(default)]
+    pub cpu: String,
+    #[serde(default)]
+    pub ram_gb: Option<u32>,
+    #[serde(default)]
+    pub storage: String,
+    #[serde(default)]
+    pub location: String,
+    #[serde(default)]
+    pub notes: String,
+}
+
+impl Host {
+    pub fn from_input(input: HostInput) -> Self {
+        let now = Utc::now();
+        Host {
+            id: new_id(),
+            name: input.name,
+            description: input.description,
+            group_id: input.group_id,
+            hypervisor: input.hypervisor,
+            hostname: input.hostname,
+            ip: input.ip,
+            cpu: input.cpu,
+            ram_gb: input.ram_gb,
+            storage: input.storage,
+            location: input.location,
+            notes: input.notes,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    pub fn apply(&mut self, input: HostInput) {
+        self.name = input.name;
+        self.description = input.description;
+        self.group_id = input.group_id;
+        self.hypervisor = input.hypervisor;
+        self.hostname = input.hostname;
+        self.ip = input.ip;
+        self.cpu = input.cpu;
+        self.ram_gb = input.ram_gb;
+        self.storage = input.storage;
+        self.location = input.location;
+        self.notes = input.notes;
+        self.touch();
+    }
+
+    pub fn touch(&mut self) {
         self.updated_at = Utc::now();
     }
 }
@@ -225,9 +338,13 @@ pub struct Vm {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    /// Groupe d'appartenance (une VM sans groupe est « non classée »)
+    /// Groupe d'appartenance (une VM sans groupe est « non classée »).
+    /// Une VM placée sur une machine physique a toujours le groupe de celle-ci.
     #[serde(default)]
     pub group_id: Option<String>,
+    /// Machine physique qui héberge la VM
+    #[serde(default)]
+    pub host_id: Option<String>,
     #[serde(default)]
     pub os: String,
     #[serde(default)]
@@ -253,6 +370,9 @@ pub struct VmInput {
     pub description: String,
     #[serde(default)]
     pub group_id: Option<String>,
+    /// Machine physique ; si elle est renseignée, son groupe remplace `group_id`
+    #[serde(default)]
+    pub host_id: Option<String>,
     #[serde(default)]
     pub os: String,
     #[serde(default)]
@@ -273,6 +393,7 @@ impl Vm {
             name: input.name,
             description: input.description,
             group_id: input.group_id,
+            host_id: input.host_id,
             os: input.os,
             tags: input.tags,
             network: input.network,
@@ -288,6 +409,7 @@ impl Vm {
         self.name = input.name;
         self.description = input.description;
         self.group_id = input.group_id;
+        self.host_id = input.host_id;
         self.os = input.os;
         self.tags = input.tags;
         self.network = input.network;

@@ -280,8 +280,8 @@ fn open_encrypted(path: &Path, st: &mut UiState) -> Option<Store> {
 
 fn import_message(report: ImportReport) -> String {
     let mut message = format!(
-        "Import terminé : {} groupe(s) et {} VM ajouté(s)",
-        report.groups, report.vms
+        "Import terminé : {} groupe(s), {} machine(s) physique(s) et {} VM ajouté(s)",
+        report.groups, report.hosts, report.vms
     );
     if report.passwords_dropped > 0 {
         message.push_str(&format!(

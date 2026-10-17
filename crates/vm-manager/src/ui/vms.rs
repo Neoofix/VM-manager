@@ -1,7 +1,7 @@
 /// Liste des VM : recherche, filtre par groupe, cartes regroupées par groupe
 use egui::{RichText, Ui};
 use vm_core::query::{ssh_command, vm_matches};
-use vm_core::{Group, Store, Vm};
+use vm_core::{Group, Host, Store, Vm};
 
 use super::widgets::*;
 use crate::app::{GroupFilter, UiState};
@@ -19,6 +19,12 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
             .and_then(|id| store.groups().iter().find(|g| &g.id == id))
     };
 
+    let host_of = |vm: &Vm| -> Option<&Host> {
+        vm.host_id
+            .as_ref()
+            .and_then(|id| store.hosts().iter().find(|h| &h.id == id))
+    };
+
     let mut filtered: Vec<&Vm> = all
         .iter()
         .filter(|v| match &st.group_filter {
@@ -26,7 +32,7 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
             GroupFilter::Ungrouped => v.group_id.is_none(),
             GroupFilter::Group(id) => v.group_id.as_ref() == Some(id),
         })
-        .filter(|v| vm_matches(v, group_of(v), &st.search))
+        .filter(|v| vm_matches(v, group_of(v), host_of(v), &st.search))
         .collect();
     filtered.sort_by_key(|v| v.name.to_lowercase());
 

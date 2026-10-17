@@ -5,7 +5,7 @@
 use std::net::IpAddr;
 
 use crate::error::{CoreError, CoreResult};
-use crate::models::{GroupInput, VmInput, VmUserInput};
+use crate::models::{GroupInput, HostInput, VmInput, VmUserInput};
 
 pub const MAX_NAME_LEN: usize = 64;
 pub const MAX_USERNAME_LEN: usize = 64;
@@ -29,6 +29,36 @@ pub fn normalize_group(mut input: GroupInput) -> CoreResult<GroupInput> {
     Ok(input)
 }
 
+// ── Machines physiques ────────────────────────────────────────────────────
+
+pub fn normalize_host(mut input: HostInput) -> CoreResult<HostInput> {
+    input.name = input.name.trim().to_string();
+    input.description = input.description.trim().to_string();
+    input.group_id = non_empty(input.group_id.as_deref());
+    input.hypervisor = input.hypervisor.trim().to_string();
+    input.hostname = input.hostname.trim().to_string();
+    input.ip = input.ip.trim().to_string();
+    input.cpu = input.cpu.trim().to_string();
+    input.storage = input.storage.trim().to_string();
+    input.location = input.location.trim().to_string();
+    input.notes = input.notes.trim_end().to_string();
+
+    validate_name(&input.name, "Le nom de la machine physique")?;
+    parse_ip_field(&input.ip, "Adresse IP")?;
+    if !input.hostname.is_empty() && !is_valid_hostname(&input.hostname) {
+        return Err(CoreError::validation(format!(
+            "Nom d'hôte invalide : « {} »",
+            input.hostname
+        )));
+    }
+    if input.ram_gb == Some(0) {
+        return Err(CoreError::validation(
+            "Mémoire vive invalide : 0 Go (attendu : au moins 1 Go)",
+        ));
+    }
+    Ok(input)
+}
+
 // ── VM ────────────────────────────────────────────────────────────────────
 
 pub fn normalize_vm(mut input: VmInput) -> CoreResult<VmInput> {
@@ -37,6 +67,7 @@ pub fn normalize_vm(mut input: VmInput) -> CoreResult<VmInput> {
     input.os = input.os.trim().to_string();
     input.notes = input.notes.trim_end().to_string();
     input.group_id = non_empty(input.group_id.as_deref());
+    input.host_id = non_empty(input.host_id.as_deref());
     input.tags = dedupe(input.tags.iter().map(|t| t.trim().to_string()));
 
     validate_name(&input.name, "Le nom de la VM")?;
@@ -394,6 +425,63 @@ mod tests {
         let mut input = vm("x");
         input.tags = vec!["web".into(), " Web ".into(), "".into(), "db".into()];
         assert_eq!(normalize_vm(input).unwrap().tags, vec!["web", "db"]);
+    }
+
+    fn host(name: &str) -> HostInput {
+        HostInput {
+            name: name.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn host_is_trimmed_and_name_required() {
+        let mut input = host("  pve-01  ");
+        input.hypervisor = " Proxmox VE ".into();
+        input.ip = " 10.0.0.2 ".into();
+        input.hostname = " pve-01.lan ".into();
+        input.group_id = Some("  ".into());
+        input.location = " Baie 3 ".into();
+        input.notes = "note  \n".into();
+        let out = normalize_host(input).unwrap();
+        assert_eq!(out.name, "pve-01");
+        assert_eq!(out.hypervisor, "Proxmox VE");
+        assert_eq!(out.ip, "10.0.0.2");
+        assert_eq!(out.hostname, "pve-01.lan");
+        assert_eq!(out.group_id, None);
+        assert_eq!(out.location, "Baie 3");
+        assert_eq!(out.notes, "note");
+        assert!(normalize_host(host("   ")).is_err());
+        assert!(normalize_host(host(&"x".repeat(MAX_NAME_LEN + 1))).is_err());
+    }
+
+    #[test]
+    fn host_rejects_bad_values() {
+        let mut bad_ip = host("h");
+        bad_ip.ip = "10.0.0.300".into();
+        let mut bad_hostname = host("h");
+        bad_hostname.hostname = "bad_host".into();
+        let mut zero_ram = host("h");
+        zero_ram.ram_gb = Some(0);
+        for input in [bad_ip, bad_hostname, zero_ram] {
+            assert!(matches!(
+                normalize_host(input),
+                Err(CoreError::Validation(_))
+            ));
+        }
+        let mut ok = host("h");
+        ok.ip = "2001:db8::2".into();
+        ok.ram_gb = Some(256);
+        assert!(normalize_host(ok).is_ok());
+    }
+
+    #[test]
+    fn vm_host_id_is_trimmed() {
+        let mut input = vm("x");
+        input.host_id = Some("  ".into());
+        assert_eq!(normalize_vm(input.clone()).unwrap().host_id, None);
+        input.host_id = Some(" abc ".into());
+        assert_eq!(normalize_vm(input).unwrap().host_id.as_deref(), Some("abc"));
     }
 
     #[test]

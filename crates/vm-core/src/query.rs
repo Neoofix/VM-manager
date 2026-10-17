@@ -1,5 +1,5 @@
 /// Fonctions de lecture de l'inventaire : recherche et commande SSH
-use crate::models::{Group, Vm};
+use crate::models::{Group, Host, Vm};
 
 /// Adresse à utiliser pour se connecter : IP, sinon nom d'hôte
 pub fn vm_host(vm: &Vm) -> &str {
@@ -31,8 +31,9 @@ pub fn ssh_command(vm: &Vm, user: Option<&str>) -> Option<String> {
 }
 
 /// Recherche plein texte : chaque mot de la requête doit apparaître dans au moins
-/// un champ utile (insensible à la casse et aux accents courants)
-pub fn vm_matches(vm: &Vm, group: Option<&Group>, query: &str) -> bool {
+/// un champ utile (insensible à la casse et aux accents courants). La machine
+/// physique de la VM (nom, nom d'hôte, IP) est cherchée aussi.
+pub fn vm_matches(vm: &Vm, group: Option<&Group>, host: Option<&Host>, query: &str) -> bool {
     let query = fold(query);
     let terms: Vec<&str> = query.split_whitespace().collect();
     if terms.is_empty() {
@@ -59,8 +60,42 @@ pub fn vm_matches(vm: &Vm, group: Option<&Group>, query: &str) -> bool {
     if let Some(g) = group {
         fields.push(&g.name);
     }
+    if let Some(h) = host {
+        fields.extend([h.name.as_str(), &h.hostname, &h.ip]);
+    }
     fields.extend(vm.tags.iter().map(String::as_str));
     fields.extend(vm.users.iter().map(|u| u.username.as_str()));
+    all_terms_match(&terms, &fields)
+}
+
+/// Recherche plein texte sur une machine physique (mêmes règles que [`vm_matches`])
+pub fn host_matches(host: &Host, group: Option<&Group>, query: &str) -> bool {
+    let query = fold(query);
+    let terms: Vec<&str> = query.split_whitespace().collect();
+    if terms.is_empty() {
+        return true;
+    }
+    let ram = host.ram_gb.map(|r| format!("{r} go")).unwrap_or_default();
+    let mut fields: Vec<&str> = vec![
+        &host.name,
+        &host.description,
+        &host.hypervisor,
+        &host.hostname,
+        &host.ip,
+        &host.cpu,
+        &ram,
+        &host.storage,
+        &host.location,
+        &host.notes,
+    ];
+    if let Some(g) = group {
+        fields.push(&g.name);
+    }
+    all_terms_match(&terms, &fields)
+}
+
+/// Chaque terme (déjà normalisé) doit apparaître dans au moins un champ
+fn all_terms_match(terms: &[&str], fields: &[&str]) -> bool {
     let haystack: Vec<String> = fields
         .iter()
         .filter(|f| !f.is_empty())
@@ -89,7 +124,7 @@ fn fold(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{GroupInput, VmInput, VmUser, VmUserInput};
+    use crate::models::{GroupInput, HostInput, VmInput, VmUser, VmUserInput};
 
     fn vm() -> Vm {
         Vm::from_input(VmInput {
@@ -130,13 +165,50 @@ mod tests {
             ..Default::default()
         });
 
-        assert!(vm_matches(&v, None, ""));
-        assert!(vm_matches(&v, None, "production 192.168"));
-        assert!(vm_matches(&v, None, "INTEGRATION"));
-        assert!(vm_matches(&v, None, "vlan 30"));
-        assert!(vm_matches(&v, None, "deploy"));
-        assert!(vm_matches(&v, Some(&g), "clients"));
-        assert!(!vm_matches(&v, None, "clients"));
-        assert!(!vm_matches(&v, None, "production nope"));
+        assert!(vm_matches(&v, None, None, ""));
+        assert!(vm_matches(&v, None, None, "production 192.168"));
+        assert!(vm_matches(&v, None, None, "INTEGRATION"));
+        assert!(vm_matches(&v, None, None, "vlan 30"));
+        assert!(vm_matches(&v, None, None, "deploy"));
+        assert!(vm_matches(&v, Some(&g), None, "clients"));
+        assert!(!vm_matches(&v, None, None, "clients"));
+        assert!(!vm_matches(&v, None, None, "production nope"));
+    }
+
+    #[test]
+    fn search_includes_the_host() {
+        let v = vm();
+        let h = Host::from_input(HostInput {
+            name: "pve-01".into(),
+            hostname: "hyperviseur.lan".into(),
+            ip: "10.9.9.1".into(),
+            ..Default::default()
+        });
+        assert!(vm_matches(&v, None, Some(&h), "pve-01"));
+        assert!(vm_matches(&v, None, Some(&h), "hyperviseur"));
+        assert!(vm_matches(&v, None, Some(&h), "10.9.9 web"));
+        assert!(!vm_matches(&v, None, None, "pve-01"));
+    }
+
+    #[test]
+    fn host_search_covers_its_fields() {
+        let h = Host::from_input(HostInput {
+            name: "pve-01".into(),
+            hypervisor: "Proxmox VE".into(),
+            cpu: "Xeon E5".into(),
+            ram_gb: Some(128),
+            location: "Salle serveurs".into(),
+            ..Default::default()
+        });
+        let g = Group::from_input(GroupInput {
+            name: "Clients".into(),
+            ..Default::default()
+        });
+        assert!(host_matches(&h, None, ""));
+        assert!(host_matches(&h, None, "proxmox xeon"));
+        assert!(host_matches(&h, None, "128 go"));
+        assert!(host_matches(&h, None, "SALLE"));
+        assert!(host_matches(&h, Some(&g), "clients pve"));
+        assert!(!host_matches(&h, None, "clients"));
     }
 }
