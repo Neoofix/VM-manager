@@ -1,4 +1,4 @@
-/// Fiche d'une VM : réseau, SSH, utilisateurs (gérés en place), notes
+/// Fiche d'une VM : machine physique, réseau, SSH, utilisateurs (gérés en place), notes
 use egui::{RichText, Ui};
 use vm_core::query::ssh_command;
 use vm_core::{SshAuthMethod, Store, Vm, VmUser};
@@ -28,6 +28,7 @@ pub fn show(ui: &Ui, store: &Store, st: &mut UiState) {
         .group_id
         .as_ref()
         .and_then(|gid| store.groups().iter().find(|g| &g.id == gid));
+    let host = vm.host_id.as_ref().and_then(|hid| store.host(hid).ok());
     let updated = vm
         .updated_at
         .with_timezone(&chrono::Local)
@@ -64,6 +65,25 @@ pub fn show(ui: &Ui, store: &Store, st: &mut UiState) {
                 ui.label(RichText::new(&vm.description).color(p().text_strong));
             }
             ui.add_space(10.0);
+
+            if let Some(h) = host {
+                section_title(ui, "Machine physique");
+                inset_frame().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("🖧").color(p().accent_fg));
+                        ui.label(RichText::new(&h.name).strong().color(p().text_strong));
+                        if !h.hypervisor.is_empty() {
+                            chip(ui, &h.hypervisor, p().text_secondary);
+                        }
+                        if !h.ip.is_empty() {
+                            ui.label(RichText::new(&h.ip).monospace().color(p().text_secondary));
+                            copy_button(ui, &h.ip);
+                        }
+                    });
+                });
+                ui.add_space(10.0);
+            }
 
             section_title(ui, "Réseau");
             let n = &vm.network;

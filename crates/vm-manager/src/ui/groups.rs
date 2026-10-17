@@ -1,8 +1,9 @@
-/// Groupes : liste dépliable avec les VM membres, création, modification, suppression
+/// Groupes : liste dépliable (machines physiques et VM membres), création,
+/// modification, suppression
 use egui::{RichText, Sense, Stroke, Ui};
-use vm_core::Store;
+use vm_core::{Host, Store, Vm};
 
-use super::vms::sorted_groups;
+use super::vms::{set_host_filter, sorted_groups, sorted_hosts, HostFilter};
 use super::widgets::*;
 use crate::app::{Command, GroupFilter, UiState};
 use crate::forms::GroupForm;
@@ -35,18 +36,28 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
     }
 
     for g in sorted_groups(store) {
-        let mut members: Vec<_> = store
+        let mut members: Vec<&Vm> = store
             .vms()
             .iter()
             .filter(|v| v.group_id.as_deref() == Some(g.id.as_str()))
             .collect();
         members.sort_by_key(|v| v.name.to_lowercase());
+        let hosts: Vec<&Host> = sorted_hosts(store)
+            .into_iter()
+            .filter(|h| h.group_id.as_deref() == Some(g.id.as_str()))
+            .collect();
         let open = st.expanded_groups.contains(&g.id);
 
         card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                if icon_button(ui, if open { "⏷" } else { "⏵" }, "Afficher les VM").clicked() {
+                if icon_button(
+                    ui,
+                    if open { "⏷" } else { "⏵" },
+                    "Afficher les machines et les VM",
+                )
+                .clicked()
+                {
                     if open {
                         st.expanded_groups.remove(&g.id);
                     } else {
@@ -57,29 +68,30 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     ui.label(RichText::new(&g.name).strong().color(p().text_strong));
-                    let desc = if g.description.is_empty() { "Pas de description" } else { &g.description };
+                    let desc = if g.description.is_empty() {
+                        "Pas de description"
+                    } else {
+                        &g.description
+                    };
                     ui.label(RichText::new(desc).small().color(p().text_secondary));
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if icon_button(ui, "🗑", "Supprimer").clicked() {
-                        let message = if members.is_empty() {
-                            format!("Supprimer « {} » ?", g.name)
-                        } else {
-                            format!(
-                                "Supprimer « {} » ?\nSes {} VM sont conservées et deviennent « non classées ».",
-                                g.name,
-                                members.len()
-                            )
-                        };
-                        st.ask("Supprimer le groupe", message, Command::DeleteGroup(g.id.clone()));
+                        let message = delete_message(&g.name, hosts.len(), members.len());
+                        st.ask(
+                            "Supprimer le groupe",
+                            message,
+                            Command::DeleteGroup(g.id.clone()),
+                        );
                     }
                     if icon_button(ui, "✏", "Modifier").clicked() {
                         st.group_form = Some(GroupForm::edit(g));
                     }
                     let link = ui
-                        .link(format!("{} VM", members.len()))
+                        .link(format!("{} · {} VM", machines(hosts.len()), members.len()))
                         .on_hover_text("Voir ces VM");
                     if link.clicked() {
+                        set_host_filter(ui.ctx(), HostFilter::All);
                         st.open_vms(GroupFilter::Group(g.id.clone()));
                     }
                 });
@@ -87,28 +99,139 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
 
             if open {
                 ui.separator();
-                if members.is_empty() {
-                    ui.label(RichText::new("Aucune VM dans ce groupe.").color(p().text_muted));
+                if members.is_empty() && hosts.is_empty() {
+                    ui.label(
+                        RichText::new("Aucune machine ni VM dans ce groupe.").color(p().text_muted),
+                    );
                 }
-                for vm in members {
+                // Arborescence : machines physiques et leurs VM, puis VM sans machine
+                for h in &hosts {
+                    let on_host: Vec<&Vm> = members
+                        .iter()
+                        .copied()
+                        .filter(|v| v.host_id.as_deref() == Some(h.id.as_str()))
+                        .collect();
                     let r = ui
                         .scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| {
                             ui.horizontal(|ui| {
-                                let ip = if vm.network.ip.is_empty() { "—" } else { &vm.network.ip };
-                                cell(ui, 200.0, RichText::new(&vm.name).color(p().text_strong));
-                                cell(ui, 160.0, RichText::new(ip).monospace().color(p().text_secondary));
-                                ui.add(egui::Label::new(RichText::new(&vm.description).color(p().text_secondary)).truncate());
+                                ui.label(RichText::new("🖧").color(p().accent_fg));
+                                cell(
+                                    ui,
+                                    180.0,
+                                    RichText::new(&h.name).strong().color(p().text_strong),
+                                );
+                                let hypervisor = if h.hypervisor.is_empty() {
+                                    "—"
+                                } else {
+                                    &h.hypervisor
+                                };
+                                cell(
+                                    ui,
+                                    140.0,
+                                    RichText::new(hypervisor).color(p().text_secondary),
+                                );
+                                ui.label(
+                                    RichText::new(format!("{} VM", on_host.len()))
+                                        .small()
+                                        .color(p().text_muted),
+                                );
                             });
                         })
                         .response
-                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text("Voir les VM de cette machine");
                     if r.clicked() {
-                        st.open_vm(&vm.id);
+                        set_host_filter(ui.ctx(), HostFilter::Host(h.id.clone()));
+                        st.open_vms(GroupFilter::Group(g.id.clone()));
                     }
+                    ui.indent(("group-host", &h.id), |ui| {
+                        if on_host.is_empty() {
+                            ui.label(
+                                RichText::new("Aucune VM sur cette machine.")
+                                    .small()
+                                    .color(p().text_muted),
+                            );
+                        }
+                        for vm in on_host {
+                            vm_row(ui, vm, st);
+                        }
+                    });
+                }
+                let without_host: Vec<&Vm> = members
+                    .iter()
+                    .copied()
+                    .filter(|v| {
+                        !hosts
+                            .iter()
+                            .any(|h| v.host_id.as_deref() == Some(h.id.as_str()))
+                    })
+                    .collect();
+                if !hosts.is_empty() && !without_host.is_empty() {
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(format!("Sans machine physique  ({})", without_host.len()))
+                            .small()
+                            .strong()
+                            .color(p().text_muted),
+                    );
+                }
+                for vm in without_host {
+                    vm_row(ui, vm, st);
                 }
             }
         });
         ui.add_space(4.0);
+    }
+}
+
+/// « 1 machine », « 3 machines »
+fn machines(n: usize) -> String {
+    format!("{n} machine{}", if n > 1 { "s" } else { "" })
+}
+
+/// Confirmation de suppression d'un groupe : ses machines et VM sont conservées
+fn delete_message(name: &str, hosts: usize, vms: usize) -> String {
+    let kept = match (hosts, vms) {
+        (0, 0) => return format!("Supprimer « {name} » ?"),
+        (0, m) => format!("Ses {m} VM sont conservées et deviennent « non classées »."),
+        (1, 0) => "Sa machine physique est conservée et devient sans groupe.".to_string(),
+        (1, m) => {
+            format!("Sa machine physique et ses {m} VM sont conservées et deviennent sans groupe.")
+        }
+        (n, 0) => format!("Ses {n} machines physiques sont conservées et deviennent sans groupe."),
+        (n, m) => format!(
+            "Ses {n} machines physiques et {m} VM sont conservées et deviennent sans groupe."
+        ),
+    };
+    format!("Supprimer « {name} » ?\n{kept}")
+}
+
+/// Ligne cliquable d'une VM (nom, IP, description) ouvrant sa fiche
+fn vm_row(ui: &mut Ui, vm: &Vm, st: &mut UiState) {
+    let r = ui
+        .scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| {
+            ui.horizontal(|ui| {
+                let ip = if vm.network.ip.is_empty() {
+                    "—"
+                } else {
+                    &vm.network.ip
+                };
+                cell(ui, 200.0, RichText::new(&vm.name).color(p().text_strong));
+                cell(
+                    ui,
+                    160.0,
+                    RichText::new(ip).monospace().color(p().text_secondary),
+                );
+                ui.add(
+                    egui::Label::new(RichText::new(&vm.description).color(p().text_secondary))
+                        .truncate(),
+                );
+            });
+        })
+        .response
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    if r.clicked() {
+        st.open_vm(&vm.id);
     }
 }
 
@@ -191,4 +314,26 @@ fn cell(ui: &mut Ui, width: f32, text: RichText) {
             ui.add(egui::Label::new(text).truncate());
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn group_delete_messages() {
+        assert_eq!(delete_message("Lab", 0, 0), "Supprimer « Lab » ?");
+        assert!(delete_message("Lab", 0, 3)
+            .ends_with("Ses 3 VM sont conservées et deviennent « non classées »."));
+        assert!(
+            delete_message("Lab", 1, 2).contains("Sa machine physique et ses 2 VM sont conservées")
+        );
+        assert!(delete_message("Lab", 2, 0).contains("Ses 2 machines physiques sont conservées"));
+        assert!(delete_message("Lab", 2, 5).contains(
+            "Ses 2 machines physiques et 5 VM sont conservées et deviennent sans groupe."
+        ));
+        assert_eq!(machines(1), "1 machine");
+        assert_eq!(machines(0), "0 machine");
+        assert_eq!(machines(3), "3 machines");
+    }
 }

@@ -1,4 +1,5 @@
-/// Liste des VM : recherche, filtre par groupe, cartes regroupées par groupe
+/// Liste des VM : recherche, filtres par groupe et par machine physique, cartes
+/// en arborescence groupe → machine physique → VM
 use egui::{RichText, Ui};
 use vm_core::query::{ssh_command, vm_matches};
 use vm_core::{Group, Host, Store, Vm};
@@ -10,6 +11,29 @@ use crate::os_presets::family_of;
 use crate::theme::*;
 
 const CARD_WIDTH: f32 = 290.0;
+
+/// Filtre de machine physique de la liste des VM. Gardé dans la mémoire egui
+/// (et non dans `UiState`) : il ne concerne que cet écran.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum HostFilter {
+    #[default]
+    All,
+    NoHost,
+    Host(String),
+}
+
+fn host_filter_id() -> egui::Id {
+    egui::Id::unique("vm-host-filter")
+}
+
+pub fn host_filter(ctx: &egui::Context) -> HostFilter {
+    ctx.data(|d| d.get_temp(host_filter_id()))
+        .unwrap_or_default()
+}
+
+pub fn set_host_filter(ctx: &egui::Context, filter: HostFilter) {
+    ctx.data_mut(|d| d.insert_temp(host_filter_id(), filter));
+}
 
 pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
     let all = store.vms();
@@ -25,12 +49,34 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
             .and_then(|id| store.hosts().iter().find(|h| &h.id == id))
     };
 
+    // Machines proposées dans le filtre : celles du groupe filtré
+    let filter_hosts: Vec<&Host> = sorted_hosts(store)
+        .into_iter()
+        .filter(|h| match &st.group_filter {
+            GroupFilter::All => true,
+            GroupFilter::Ungrouped => h.group_id.is_none(),
+            GroupFilter::Group(id) => h.group_id.as_ref() == Some(id),
+        })
+        .collect();
+    let mut host_filter = host_filter(ui.ctx());
+    if let HostFilter::Host(id) = &host_filter {
+        // Machine supprimée ou hors du groupe filtré : filtre réinitialisé
+        if !filter_hosts.iter().any(|h| &h.id == id) {
+            host_filter = HostFilter::All;
+        }
+    }
+
     let mut filtered: Vec<&Vm> = all
         .iter()
         .filter(|v| match &st.group_filter {
             GroupFilter::All => true,
             GroupFilter::Ungrouped => v.group_id.is_none(),
             GroupFilter::Group(id) => v.group_id.as_ref() == Some(id),
+        })
+        .filter(|v| match &host_filter {
+            HostFilter::All => true,
+            HostFilter::NoHost => host_of(v).is_none(),
+            HostFilter::Host(id) => v.host_id.as_ref() == Some(id),
         })
         .filter(|v| vm_matches(v, group_of(v), host_of(v), &st.search))
         .collect();
@@ -47,13 +93,18 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
                 GroupFilter::Group(id) => Some(id.clone()),
                 _ => None,
             };
-            st.vm_form = Some(VmForm::create(group));
+            let host = match &host_filter {
+                HostFilter::Host(id) => store.hosts().iter().find(|h| &h.id == id),
+                _ => None,
+            };
+            st.vm_form = Some(VmForm::create_on(group, host));
         }
     });
 
     // Filtres
     ui.horizontal(|ui| {
-        let search_width = ui.available_width() - 240.0;
+        const COMBO_WIDTH: f32 = 200.0;
+        let search_width = ui.available_width() - 2.0 * (COMBO_WIDTH + 20.0);
         ui.add_sized(
             [search_width, 32.0],
             egui::TextEdit::singleline(&mut st.search)
@@ -71,7 +122,7 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
                 .unwrap_or_default(),
         };
         egui::ComboBox::from_id_salt("group-filter")
-            .width(220.0)
+            .width(COMBO_WIDTH)
             .selected_text(selected)
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut st.group_filter, GroupFilter::All, "Tous les groupes");
@@ -84,7 +135,31 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
                 }
                 ui.selectable_value(&mut st.group_filter, GroupFilter::Ungrouped, "Non classées");
             });
+        let selected = match &host_filter {
+            HostFilter::All => "Toutes les machines".to_string(),
+            HostFilter::NoHost => "Sans machine".to_string(),
+            HostFilter::Host(id) => filter_hosts
+                .iter()
+                .find(|h| &h.id == id)
+                .map(|h| format!("🖧 {}", h.name))
+                .unwrap_or_default(),
+        };
+        egui::ComboBox::from_id_salt("host-filter")
+            .width(COMBO_WIDTH)
+            .selected_text(selected)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut host_filter, HostFilter::All, "Toutes les machines");
+                ui.selectable_value(&mut host_filter, HostFilter::NoHost, "Sans machine");
+                for h in &filter_hosts {
+                    ui.selectable_value(
+                        &mut host_filter,
+                        HostFilter::Host(h.id.clone()),
+                        format!("🖧 {}", host_label(h)),
+                    );
+                }
+            });
     });
+    set_host_filter(ui.ctx(), host_filter);
     ui.add_space(8.0);
 
     if all.is_empty() {
@@ -109,7 +184,8 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
         return;
     }
 
-    // Une section par groupe (ordre alphabétique), puis les VM non classées
+    // Arborescence : un groupe (ordre alphabétique, puis « Non classées »), ses
+    // machines physiques avec leurs VM, puis les VM du groupe sans machine
     let mut sections: Vec<(Option<&Group>, Vec<&Vm>)> = sorted_groups(store)
         .into_iter()
         .map(|g| {
@@ -137,18 +213,77 @@ pub fn show(ui: &mut Ui, store: &Store, st: &mut UiState) {
             ui.label(RichText::new(name).strong().color(p().text_secondary));
             ui.label(RichText::new(format!("({})", items.len())).color(p().text_muted));
         });
-        // Cartes alignées en haut, renvoyées à la ligne quand la place manque
-        ui.with_layout(
-            egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true),
-            |ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
-                for vm in items {
-                    vm_card(ui, vm, group, st);
-                }
-            },
-        );
+
+        let group_id = group.map(|g| g.id.as_str());
+        let hosts: Vec<&Host> = sorted_hosts(store)
+            .into_iter()
+            .filter(|h| h.group_id.as_deref() == group_id)
+            .collect();
+        let mut shown_hosts = 0;
+        for host in &hosts {
+            let on_host: Vec<&Vm> = items
+                .iter()
+                .copied()
+                .filter(|v| v.host_id.as_deref() == Some(host.id.as_str()))
+                .collect();
+            if on_host.is_empty() {
+                continue;
+            }
+            shown_hosts += 1;
+            let title = RichText::new(format!("🖧  {}  ({})", host_label(host), on_host.len()))
+                .strong()
+                .color(p().text);
+            egui::CollapsingHeader::new(title)
+                .id_salt(("vm-host-section", &host.id))
+                .default_open(true)
+                .show(ui, |ui| {
+                    cards(ui, &on_host, group, host_of, st);
+                });
+        }
+
+        let without_host: Vec<&Vm> = items
+            .iter()
+            .copied()
+            .filter(|v| {
+                !hosts
+                    .iter()
+                    .any(|h| v.host_id.as_deref() == Some(h.id.as_str()))
+            })
+            .collect();
+        if !without_host.is_empty() {
+            if shown_hosts > 0 {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(format!("Sans machine physique  ({})", without_host.len()))
+                        .small()
+                        .strong()
+                        .color(p().text_muted),
+                );
+            }
+            cards(ui, &without_host, group, host_of, st);
+        }
         ui.add_space(12.0);
     }
+}
+
+/// Cartes alignées en haut, renvoyées à la ligne quand la place manque.
+/// `host_of` : machine physique affichée sur chaque carte.
+fn cards<'a>(
+    ui: &mut Ui,
+    vms: &[&'a Vm],
+    group: Option<&Group>,
+    host_of: impl Fn(&'a Vm) -> Option<&'a Host>,
+    st: &mut UiState,
+) {
+    ui.with_layout(
+        egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true),
+        |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
+            for vm in vms {
+                vm_card(ui, vm, group, host_of(vm), st);
+            }
+        },
+    );
 }
 
 pub fn sorted_groups(store: &Store) -> Vec<&Group> {
@@ -157,7 +292,22 @@ pub fn sorted_groups(store: &Store) -> Vec<&Group> {
     groups
 }
 
-fn vm_card(ui: &mut Ui, vm: &Vm, group: Option<&Group>, st: &mut UiState) {
+pub fn sorted_hosts(store: &Store) -> Vec<&Host> {
+    let mut hosts: Vec<&Host> = store.hosts().iter().collect();
+    hosts.sort_by_key(|h| h.name.to_lowercase());
+    hosts
+}
+
+/// « nom — hyperviseur » (nom seul si l'hyperviseur n'est pas renseigné)
+pub fn host_label(host: &Host) -> String {
+    if host.hypervisor.is_empty() {
+        host.name.clone()
+    } else {
+        format!("{} — {}", host.name, host.hypervisor)
+    }
+}
+
+fn vm_card(ui: &mut Ui, vm: &Vm, group: Option<&Group>, host: Option<&Host>, st: &mut UiState) {
     let response = ui
         .allocate_ui_with_layout(
             egui::vec2(CARD_WIDTH, 150.0),
@@ -207,6 +357,22 @@ fn vm_card(ui: &mut Ui, vm: &Vm, group: Option<&Group>, st: &mut UiState) {
                         };
                         if let Some(vlan) = vm.network.vlan {
                             chip(ui, format!("VLAN {vlan}"), p().text_secondary);
+                        }
+                        if let Some(h) = host {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(format!("🖧 {}", h.name))
+                                                .small()
+                                                .color(p().text_secondary),
+                                        )
+                                        .truncate(),
+                                    )
+                                    .on_hover_text(format!("Machine physique : {}", host_label(h)));
+                                },
+                            );
                         }
                     });
                     if let Some(cmd) = ssh_command(vm, None) {

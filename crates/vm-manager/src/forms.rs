@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use vm_core::vault::validate_master_password;
 use vm_core::{
-    Group, GroupInput, NetworkInfo, SshAuthMethod, SshInfo, Vm, VmInput, VmUser, VmUserInput,
+    Group, GroupInput, Host, NetworkInfo, SshAuthMethod, SshInfo, Vm, VmInput, VmUser, VmUserInput,
     DEFAULT_SSH_PORT,
 };
 
@@ -61,6 +61,34 @@ impl VmForm {
             group_id,
             port: DEFAULT_SSH_PORT.to_string(),
             ..Default::default()
+        }
+    }
+
+    /// Création préréglée sur une machine physique (dont le groupe s'impose)
+    pub fn create_on(group_id: Option<String>, host: Option<&Host>) -> Self {
+        let mut form = Self::create(group_id);
+        if host.is_some() {
+            form.set_host(host);
+        }
+        form
+    }
+
+    /// Choisit la machine physique : la VM prend alors le groupe de la machine.
+    /// « Aucune » (`None`) laisse le groupe actuel, de nouveau modifiable.
+    pub fn set_host(&mut self, host: Option<&Host>) {
+        self.host_id = host.map(|h| h.id.clone());
+        if let Some(h) = host {
+            self.group_id = h.group_id.clone();
+        }
+    }
+
+    /// Réaligne le formulaire sur l'inventaire : machine disparue oubliée,
+    /// groupe recopié depuis la machine (règle appliquée aussi par le cœur)
+    pub fn sync_host(&mut self, hosts: &[Host]) {
+        let Some(id) = &self.host_id else { return };
+        match hosts.iter().find(|h| &h.id == id) {
+            Some(h) => self.group_id = h.group_id.clone(),
+            None => self.host_id = None,
         }
     }
 
@@ -458,6 +486,55 @@ mod tests {
         assert_eq!(back.vlan, "10");
         assert_eq!(back.dns, "1.1.1.1, 9.9.9.9");
         assert_eq!(back.edit_id.as_deref(), Some(vm.id.as_str()));
+    }
+
+    fn host(id: &str, group: Option<&str>) -> Host {
+        let mut h = Host::from_input(vm_core::HostInput {
+            name: id.into(),
+            group_id: group.map(String::from),
+            ..Default::default()
+        });
+        h.id = id.into();
+        h
+    }
+
+    #[test]
+    fn vm_form_host_imposes_group() {
+        let pve = host("pve", Some("lab"));
+        let mut f = VmForm::create_on(Some("prod".into()), Some(&pve));
+        assert_eq!(f.host_id.as_deref(), Some("pve"));
+        assert_eq!(f.group_id.as_deref(), Some("lab"));
+        let input = f.to_input().unwrap();
+        assert_eq!(input.host_id.as_deref(), Some("pve"));
+        assert_eq!(input.group_id.as_deref(), Some("lab"));
+
+        // « Aucune » : la machine est retirée, le groupe reste modifiable
+        f.set_host(None);
+        assert_eq!(f.host_id, None);
+        assert_eq!(f.group_id.as_deref(), Some("lab"));
+        f.group_id = Some("prod".into());
+        assert_eq!(f.to_input().unwrap().group_id.as_deref(), Some("prod"));
+
+        // Machine sans groupe : la VM devient non classée
+        f.set_host(Some(&host("nas", None)));
+        assert_eq!(f.group_id, None);
+    }
+
+    #[test]
+    fn vm_form_sync_host() {
+        let mut f = VmForm::create(None);
+        f.host_id = Some("pve".into());
+        f.group_id = Some("ancien".into());
+        f.sync_host(&[host("pve", Some("lab"))]);
+        assert_eq!(f.group_id.as_deref(), Some("lab"));
+        // Machine supprimée entre-temps : oubliée, le groupe est conservé
+        f.sync_host(&[]);
+        assert_eq!(f.host_id, None);
+        assert_eq!(f.group_id.as_deref(), Some("lab"));
+        // Sans machine : rien ne change
+        f.group_id = None;
+        f.sync_host(&[host("pve", Some("lab"))]);
+        assert_eq!(f.group_id, None);
     }
 
     #[test]

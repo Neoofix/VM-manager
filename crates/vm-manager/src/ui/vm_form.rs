@@ -1,9 +1,9 @@
 /// Formulaire de création / modification d'une VM (onglets Général, Réseau, SSH)
 use egui::{Color32, RichText, Ui};
-use vm_core::{SshAuthMethod, Store};
+use vm_core::{Host, SshAuthMethod, Store};
 
 use super::vm_detail::auth_label;
-use super::vms::sorted_groups;
+use super::vms::{host_label, sorted_groups, sorted_hosts};
 use super::widgets::*;
 use crate::app::{Command, UiState};
 use crate::forms::VmTab;
@@ -55,31 +55,89 @@ pub fn show(ui: &Ui, store: &Store, st: &mut UiState) {
 
             match form.tab {
                 VmTab::General => {
+                    form.sync_host(store.hosts());
                     ui.columns(2, |c| {
                         labeled(&mut c[0], "Nom *", None, |ui| {
                             let r = text_field(ui, &mut form.name, "web-01", false);
                             autofocus(&r, &mut form.focused);
                         });
-                        labeled(&mut c[1], "Groupe", None, |ui| {
+                        labeled(&mut c[1], "Machine physique", None, |ui| {
+                            let selected = form
+                                .host_id
+                                .as_ref()
+                                .and_then(|id| store.hosts().iter().find(|h| &h.id == id))
+                                .map(host_label)
+                                .unwrap_or_else(|| "Aucune".into());
+                            let mut choice: Option<Option<&Host>> = None;
+                            egui::ComboBox::from_id_salt("vm-host")
+                                .width(ui.available_width())
+                                .selected_text(selected)
+                                .show_ui(ui, |ui| {
+                                    if ui
+                                        .selectable_label(form.host_id.is_none(), "Aucune")
+                                        .clicked()
+                                    {
+                                        choice = Some(None);
+                                    }
+                                    for h in sorted_hosts(store) {
+                                        let active = form.host_id.as_deref() == Some(h.id.as_str());
+                                        if ui.selectable_label(active, host_label(h)).clicked() {
+                                            choice = Some(Some(h));
+                                        }
+                                    }
+                                });
+                            if let Some(host) = choice {
+                                form.set_host(host);
+                            }
+                        });
+                    });
+                    ui.columns(2, |c| {
+                        let locked = form.host_id.is_some();
+                        c[0].vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                ui.label(
+                                    RichText::new("Groupe")
+                                        .small()
+                                        .strong()
+                                        .color(p().text_secondary),
+                                );
+                                if locked {
+                                    ui.label(
+                                        RichText::new("(groupe de la machine)")
+                                            .small()
+                                            .color(p().text_muted),
+                                    );
+                                }
+                            });
                             let selected = form
                                 .group_id
                                 .as_ref()
                                 .and_then(|id| store.groups().iter().find(|g| &g.id == id))
                                 .map(|g| g.name.clone())
                                 .unwrap_or_else(|| "Non classée".into());
-                            egui::ComboBox::from_id_salt("vm-group")
-                                .width(ui.available_width())
-                                .selected_text(selected)
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut form.group_id, None, "Non classée");
-                                    for g in sorted_groups(store) {
+                            ui.add_enabled_ui(!locked, |ui| {
+                                egui::ComboBox::from_id_salt("vm-group")
+                                    .width(ui.available_width())
+                                    .selected_text(selected)
+                                    .show_ui(ui, |ui| {
                                         ui.selectable_value(
                                             &mut form.group_id,
-                                            Some(g.id.clone()),
-                                            &g.name,
+                                            None,
+                                            "Non classée",
                                         );
-                                    }
-                                });
+                                        for g in sorted_groups(store) {
+                                            ui.selectable_value(
+                                                &mut form.group_id,
+                                                Some(g.id.clone()),
+                                                &g.name,
+                                            );
+                                        }
+                                    });
+                            });
+                        });
+                        labeled(&mut c[1], "Système d'exploitation", None, |ui| {
+                            os_field(ui, &mut form.os);
                         });
                     });
                     labeled(ui, "Description", None, |ui| {
@@ -91,19 +149,14 @@ pub fn show(ui: &Ui, store: &Store, st: &mut UiState) {
                             false,
                         );
                     });
-                    ui.columns(2, |c| {
-                        labeled(&mut c[0], "Système d'exploitation", None, |ui| {
-                            os_field(ui, &mut form.os);
-                        });
-                        labeled(
-                            &mut c[1],
-                            "Étiquettes",
-                            Some("séparées par des virgules"),
-                            |ui| {
-                                text_field(ui, &mut form.tags, "web, docker", false);
-                            },
-                        );
-                    });
+                    labeled(
+                        ui,
+                        "Étiquettes",
+                        Some("séparées par des virgules"),
+                        |ui| {
+                            text_field(ui, &mut form.tags, "web, docker", false);
+                        },
+                    );
                     labeled(ui, "Notes", None, |ui| {
                         text_area(ui, &mut form.notes, "", 4, true);
                     });
